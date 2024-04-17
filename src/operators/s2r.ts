@@ -1,6 +1,6 @@
-import {EventEmitter} from "events";
+import { EventEmitter } from "events";
 // @ts-ignore
-import {Quad} from 'n3';
+import { Quad } from 'n3';
 
 export enum ReportStrategy {
     NonEmptyContent,
@@ -23,15 +23,15 @@ export class WindowInstance {
     }
 
     getDefinition() {
-        return "["+this.open+","+this.close+")";
+        return "[" + this.open + "," + this.close + ")";
     }
-    hasCode(){
+    hasCode() {
         return 0;
     }
 }
 
 
-export class QuadContainer{
+export class QuadContainer {
     elements: Set<Quad>;
     last_time_stamp_changed: number;
     constructor(elements: Set<Quad>, ts: number) {
@@ -42,7 +42,7 @@ export class QuadContainer{
     len() {
         return this.elements.size;
     }
-    add(quad: Quad, ts: number){
+    add(quad: Quad, ts: number) {
         this.elements.add(quad);
         this.last_time_stamp_changed = ts;
     }
@@ -63,11 +63,13 @@ export class CSPARQLWindow {
     tick: Tick;
     emitter: EventEmitter;
     name: string;
-    constructor(name:string, width: number, slide: number, report: ReportStrategy, tick: Tick, start_time : number) {
+    private logger: any;
+    constructor(name: string, width: number, slide: number, report: ReportStrategy, tick: Tick, start_time: number, logger: any) {
         this.name = name;
         this.width = width;
         this.slide = slide;
         this.report = report;
+        this.logger = logger;
         this.tick = tick;
         this.time = start_time;
         this.t0 = start_time;
@@ -75,105 +77,105 @@ export class CSPARQLWindow {
         let EventEmitter = require('events').EventEmitter;
         this.emitter = new EventEmitter();
     }
-    getContent(timestamp: number): QuadContainer | undefined{
+    getContent(timestamp: number): QuadContainer | undefined {
         let max_window = null;
         let max_time = Number.MAX_SAFE_INTEGER;
-        this.active_windows.forEach((value: QuadContainer,window:WindowInstance)=> {
-            if(window.open <= timestamp && timestamp <= window.close){
-                if(window.close < max_time){
+        this.active_windows.forEach((value: QuadContainer, window: WindowInstance) => {
+            if (window.open <= timestamp && timestamp <= window.close) {
+                if (window.close < max_time) {
                     max_time = window.close;
                     max_window = window;
                 }
             }
         });
-        if(max_window){
+        if (max_window) {
             return this.active_windows.get(max_window);
-        }else{
+        } else {
             return undefined;
         }
     }
 
     add(e: Quad, timestamp: number) {
-        console.debug("Window " + this.name+ " Received element (" + e + "," + timestamp + ")");
+        this.logger.debug(`Window ${this.name} Received element (${e} , ${timestamp})`, `CSPARQLWindow`);
         let toEvict = new Set<WindowInstance>();
         let t_e = timestamp;
 
         if (this.time > t_e) {
-            console.error("OUT OF ORDER NOT HANDLED");
+            this.logger.error("OUT OF ORDER NOT HANDLED", `CSPARQLWindow`);
         }
 
         this.scope(t_e);
 
-        for ( let w of this.active_windows.keys()){
-            console.debug("Processing Window " + this.name+ " [" + w.open + "," + w.close + ") for element (" + e + "," + timestamp + ")");
-                if (w.open <= t_e && t_e < w.close ){
-                    console.debug("Adding element [" + e + "] to Window [" + w.open + "," + w.close + ")");
-                    let temp_window = this.active_windows.get(w);
-                    if(temp_window){
-                        temp_window.add(e, timestamp);
-                    }
-                } else if (t_e > w.close ){
-                    console.debug("Scheduling for Eviction [" + w.open + "," + w.close + ")");
-                    toEvict.add(w);
+        for (let w of this.active_windows.keys()) {
+            this.logger.debug(`Processing Window ${this.name} [${w.open},${w.close}) for element (${e},${timestamp})`, `CSPARQLWindow`);
+            if (w.open <= t_e && t_e < w.close) {
+                this.logger.debug(`Adding element (${e},${timestamp}) to Window ${this.name} [${w.open},${w.close})`, `CSPARQLWindow`);
+                let temp_window = this.active_windows.get(w);
+                if (temp_window) {
+                    temp_window.add(e, timestamp);
                 }
+            } else if (t_e > w.close) {
+                this.logger.debug(`Scheduling Window ${this.name} [${w.open},${w.close}) for eviction`, `CSPARQLWindow`);
+                toEvict.add(w);
+            }
         }
         let max_window = null;
         let max_time = 0;
-        this.active_windows.forEach((value: QuadContainer,window:WindowInstance)=> {
-            if(this.compute_report(window,value, timestamp)){
-                if(window.close > max_time){
+        this.active_windows.forEach((value: QuadContainer, window: WindowInstance) => {
+            if (this.compute_report(window, value, timestamp)) {
+                if (window.close > max_time) {
                     max_time = window.close;
                     max_window = window;
                 }
             }
         });
-        if(max_window){
-            if(this.tick == Tick.TimeDriven){
-                if(timestamp > this.time){
+        if (max_window) {
+            if (this.tick == Tick.TimeDriven) {
+                if (timestamp > this.time) {
                     this.time = timestamp;
                     this.emitter.emit('RStream', this.active_windows.get(max_window));
                     // @ts-ignore
-                    console.log("Window ["+ max_window.open + "," + max_window.close + ") triggers. Content: " + this.active_windows.get(max_window));
+                    this.logger.info("Window [" + max_window.open + "," + max_window.close + ") triggers. Content: " + this.active_windows.get(max_window), `CSPARQLWindow`);
                 }
             }
         }
 
-        for(let w of toEvict){
-            console.debug("Evicting [" + w.open + "," + w.close + ")");
+        for (let w of toEvict) {
+            this.logger.debug("Evicting [" + w.open + "," + w.close + ")", `CSPARQLWindow`);
             this.active_windows.delete(w);
         }
 
     }
-    compute_report(w: WindowInstance, content: QuadContainer, timestamp: number){
-        if(this.report == ReportStrategy.OnWindowClose) {
+    compute_report(w: WindowInstance, content: QuadContainer, timestamp: number) {
+        if (this.report == ReportStrategy.OnWindowClose) {
             return w.close < timestamp;
         }
         return false;
 
     }
 
-    scope(t_e:number){
-        let c_sup =  Math.ceil(( Math.abs(t_e - this.t0) / this.slide)) * this.slide;
+    scope(t_e: number) {
+        let c_sup = Math.ceil((Math.abs(t_e - this.t0) / this.slide)) * this.slide;
         let o_i = c_sup - this.width;
-        console.debug("Calculating the Windows to Open. First one opens at [" + o_i + "] and closes at [" + c_sup + "]");
+        this.logger.debug(`Calculating the Windows to Open. First one opens at [${o_i}] and closes at [${c_sup}]`, `CSPARQLWindow`);
         do {
-            console.debug("Computing Window [" + o_i + "," + (o_i + this.width) + ") if absent");
-            computeWindowIfAbsent(this.active_windows, new WindowInstance(o_i, o_i + this.width), ()=>new QuadContainer(new Set<Quad>(),0));
+            this.logger.debug("Computing Window [" + o_i + "," + (o_i + this.width) + ") if absent", `CSPARQLWindow`);
+            computeWindowIfAbsent(this.active_windows, new WindowInstance(o_i, o_i + this.width), () => new QuadContainer(new Set<Quad>(), 0));
             o_i += this.slide;
 
         } while (o_i <= t_e);
 
     }
 
-    subscribe(output: 'RStream'|'IStream'|'DStream', call_back: (data: QuadContainer) => void) {
-        this.emitter.on(output,call_back);
+    subscribe(output: 'RStream' | 'IStream' | 'DStream', call_back: (data: QuadContainer) => void) {
+        this.emitter.on(output, call_back);
     }
 }
 function computeWindowIfAbsent(map: Map<WindowInstance, QuadContainer>, key: WindowInstance, mappingFunction: (key: WindowInstance) => QuadContainer) {
     let val = map.get(key);
     let found = false;
-    for (let w of map.keys()){
-        if (w.open == key.open && w.close == key.close){
+    for (let w of map.keys()) {
+        if (w.open == key.open && w.close == key.close) {
             found = true;
             break;
         }
