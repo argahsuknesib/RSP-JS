@@ -138,8 +138,10 @@ export class CSPARQLWindow {
                     this.time = timestamp;
                     this.emitter.emit('RStream', this.active_windows.get(max_window));
                     // @ts-ignore
+                    if (this.active_windows.get(max_window).len() > 0) {
+                    // @ts-ignore
                     this.logger.info("Window [" + max_window.open + "," + max_window.close + ") triggers. Content Size: " + this.active_windows.get(max_window)?.len(), `CSPARQLWindow`);
-                    // this.logger.info("Window [" + max_window.open + "," + max_window.close + ") triggers. Content: " + this.active_windows.get(max_window), `CSPARQLWindow`);
+                     } // this.logger.info("Window [" + max_window.open + "," + max_window.close + ") triggers. Content: " + this.active_windows.get(max_window), `CSPARQLWindow`);
                 }
             }
         }
