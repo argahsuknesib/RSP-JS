@@ -46,7 +46,7 @@ export class RSPEngine {
     constructor(query: string) {
         this.windows = new Array<CSPARQLWindow>();
         this.streams = new Map<string, RDFStream>();
-        const logLevel: LogLevel = LogLevel[LOG_CONFIG.log_level as keyof typeof LogLevel];        
+        const logLevel: LogLevel = LogLevel[LOG_CONFIG.log_level as keyof typeof LogLevel];
         this.logger = new Logger(logLevel, LOG_CONFIG.classes_to_log, LOG_CONFIG.destination as unknown as LogDestination);
         let parser = new RSPQLParser();
         let parsed_query = parser.parse(query);
@@ -65,8 +65,9 @@ export class RSPEngine {
         let emitter = new EventEmitter();
         this.windows.forEach((window) => {
             window.subscribe("RStream", async (data: QuadContainer) => {
-                this.logger.info(`Received window content ${data} for time ${data.last_time_changed()}`, `RSPEngine`);
-                // iterate over all the windows
+                if (data.last_time_changed() !== 0) {
+                    this.logger.info(`Received window content ${data} for time ${data.last_time_changed()}`, `RSPEngine`);
+                }// iterate over all the windows
                 for (let windowIt of this.windows) {
                     // filter out the current triggering one
                     if (windowIt != window) {
@@ -77,8 +78,9 @@ export class RSPEngine {
                         }
                     }
                 }
-                this.logger.info(`Starting Window Query Processing for the window time ${data.last_time_stamp_changed}`, `RSPEngine`);
-                let bindingsStream = await this.r2r.execute(data);
+                if (data.last_time_changed() !== 0) {
+                    this.logger.info(`Starting Window Query Processing for the window time ${data.last_time_stamp_changed}`, `RSPEngine`);
+                } let bindingsStream = await this.r2r.execute(data);
                 bindingsStream.on('data', (binding: any) => {
                     let object_with_timestamp: binding_with_timestamp = {
                         bindings: binding,
@@ -89,7 +91,9 @@ export class RSPEngine {
                     emitter.emit("RStream", object_with_timestamp);
                 });
                 bindingsStream.on('end', () => {
-                    this.logger.info(`Ended Comunica Binding Stream for window time ${data.last_time_changed()}`, `RSPEngine`);
+                    if (data.last_time_changed() !== 0) {
+                        this.logger.info(`Ended Comunica Binding Stream for window time ${data.last_time_changed()}`, `RSPEngine`);
+                    }
                 });
                 await bindingsStream;
             })
