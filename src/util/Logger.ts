@@ -44,13 +44,9 @@ export class Logger {
     }
 
     log(level: LogLevel, message: string, className: string) {
-        console.log(`Logging level: ${level}`);
-        console.log(`this.log_level: ${this.log_level}`);
-        
         if (level >= this.log_level && this.loggable_classes.includes(className)){
             const logPrefix = `[${LogLevel[level]}] [${className}]`;
             const logMessage = `${Date.now()} ${logPrefix} ${message}`;
-            console.log(`Logging destination: ${this.log_destination}`);
             switch (this.log_destination) {
                 case 'CONSOLE':
                     console.log(logMessage);

@@ -1,6 +1,8 @@
 import { EventEmitter } from "events";
 // @ts-ignore
 import { Quad } from 'n3';
+import { LogDestination, Logger, LogLevel } from "../util/Logger";
+import * as LOG_CONFIG from "../config/log_config.json";
 
 export enum ReportStrategy {
     NonEmptyContent,
@@ -63,13 +65,14 @@ export class CSPARQLWindow {
     tick: Tick;
     emitter: EventEmitter;
     name: string;
-    private logger: any;
-    constructor(name: string, width: number, slide: number, report: ReportStrategy, tick: Tick, start_time: number, logger: any) {
+    logger: Logger;
+    constructor(name: string, width: number, slide: number, report: ReportStrategy, tick: Tick, start_time: number) {
         this.name = name;
         this.width = width;
         this.slide = slide;
         this.report = report;
-        this.logger = logger;
+        const logLevel: LogLevel = LogLevel[LOG_CONFIG.log_level as keyof typeof LogLevel];
+        this.logger = new Logger(logLevel, LOG_CONFIG.classes_to_log, LOG_CONFIG.destination as unknown as LogDestination);
         this.tick = tick;
         this.time = start_time;
         this.t0 = start_time;
@@ -135,7 +138,8 @@ export class CSPARQLWindow {
                     this.time = timestamp;
                     this.emitter.emit('RStream', this.active_windows.get(max_window));
                     // @ts-ignore
-                    this.logger.info("Window [" + max_window.open + "," + max_window.close + ") triggers. Content: " + this.active_windows.get(max_window), `CSPARQLWindow`);
+                    this.logger.info("Window [" + max_window.open + "," + max_window.close + ") triggers. Content Size: " + this.active_windows.get(max_window)?.len(), `CSPARQLWindow`);
+                    // this.logger.info("Window [" + max_window.open + "," + max_window.close + ") triggers. Content: " + this.active_windows.get(max_window), `CSPARQLWindow`);
                 }
             }
         }

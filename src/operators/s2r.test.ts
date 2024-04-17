@@ -56,7 +56,7 @@ test('add_to_window', () => {
             defaultGraph(),
     );
 
-    let csparqlWindow = new CSPARQLWindow(":window1",10,2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0);
+    let csparqlWindow = new CSPARQLWindow(":window1",10,2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, );
 
     csparqlWindow.add(quad,0);
 });
