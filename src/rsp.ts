@@ -66,7 +66,7 @@ export class RSPEngine {
         this.windows.forEach((window) => {
             window.subscribe("RStream", async (data: QuadContainer) => {
                 if (data.last_time_changed() !== 0) {
-                    this.logger.info(`Received window content ${data} for time ${data.last_time_changed()}`, `RSPEngine`);
+                    this.logger.info(`Received window content with size ${data.len()} for time ${data.last_time_changed()}`, `RSPEngine`);
                 }// iterate over all the windows
                 for (let windowIt of this.windows) {
                     // filter out the current triggering one
