@@ -81,7 +81,7 @@ export class CSPARQLWindow {
         this.emitter = new EventEmitter();
     }
     getContent(timestamp: number): QuadContainer | undefined {
-        let max_window = null;
+        let max_window: WindowInstance | null = null;
         let max_time = Number.MAX_SAFE_INTEGER;
         this.active_windows.forEach((value: QuadContainer, window: WindowInstance) => {
             if (window.open <= timestamp && timestamp <= window.close) {
@@ -122,7 +122,7 @@ export class CSPARQLWindow {
                 toEvict.add(w);
             }
         }
-        let max_window = null;
+        let max_window: WindowInstance | null = null;
         let max_time = 0;
         this.active_windows.forEach((value: QuadContainer, window: WindowInstance) => {
             if (this.compute_report(window, value, timestamp)) {
@@ -132,19 +132,24 @@ export class CSPARQLWindow {
                 }
             }
         });
+
+
+
         if (max_window) {
+            this.logger.info(`Max Window ${this.name} [${JSON.stringify(max_window)})`, `CSPARQLWindow`);
             if (this.tick == Tick.TimeDriven) {
                 if (timestamp > this.time) {
                     this.time = timestamp;
                     this.emitter.emit('RStream', this.active_windows.get(max_window));
                     // @ts-ignore
                     if (this.active_windows.get(max_window).len() > 0) {
-                    // @ts-ignore
-                    this.logger.info("Window [" + max_window.open + "," + max_window.close + ") triggers. Content Size: " + this.active_windows.get(max_window)?.len(), `CSPARQLWindow`);
-                     } // this.logger.info("Window [" + max_window.open + "," + max_window.close + ") triggers. Content: " + this.active_windows.get(max_window), `CSPARQLWindow`);
+                        // @ts-ignore
+                        this.logger.info("Window [" + max_window.open + "," + max_window.close + ") triggers. Content Size: " + this.active_windows.get(max_window)?.len(), `CSPARQLWindow`);
+                    } // this.logger.info("Window [" + max_window.open + "," + max_window.close + ") triggers. Content: " + this.active_windows.get(max_window), `CSPARQLWindow`);
                 }
             }
         }
+
 
         for (let w of toEvict) {
             this.logger.debug("Evicting [" + w.open + "," + w.close + ")", `CSPARQLWindow`);
