@@ -136,7 +136,14 @@ export class CSPARQLWindow {
 
 
         if (max_window) {
-            this.logger.info(`Max Window ${this.name} [${JSON.stringify(max_window)})`, `CSPARQLWindow`);
+
+            const activeWindow = this.active_windows.get(max_window);
+            if (activeWindow !== undefined) {
+                if (activeWindow.len() > 0) {
+                    this.logger.info(`Max Window ${this.name} [${JSON.stringify(max_window)})`, `CSPARQLWindow`);
+                }
+            }
+
             if (this.tick == Tick.TimeDriven) {
                 if (timestamp > this.time) {
                     this.time = timestamp;
