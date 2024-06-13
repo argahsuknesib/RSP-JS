@@ -32,7 +32,7 @@ test('rsp_consumer_test', async () => {
     let query = `PREFIX : <https://rsp.js/>
     REGISTER RStream <output> AS
     SELECT *
-    FROM NAMED WINDOW :w1 ON STREAM :stream1 [RANGE 10 STEP 2]
+    FROM NAMED WINDOW :w1 ON STREAM :stream1 [RANGE 5 STEP 1]
     WHERE{
         WINDOW :w1 { ?s ?p ?o}
     }`;

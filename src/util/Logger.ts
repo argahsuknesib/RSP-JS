@@ -28,7 +28,7 @@ export class Logger {
         this.loggable_classes = loggableClasses;
         this.log_destination = logDestination;
         console.log(`Logger initialized with log level ${this.log_level}, loggable classes ${this.loggable_classes}, and log destination ${this.log_destination}`);
-        
+
     }
 
     setLogLevel(logLevel: LogLevel) {
@@ -44,16 +44,16 @@ export class Logger {
     }
 
     log(level: LogLevel, message: string, className: string) {
-        if (level >= this.log_level && this.loggable_classes.includes(className)){
-            const logPrefix = `[${LogLevel[level]}] [${className}]`;
-            const logMessage = `${Date.now()} ${logPrefix} ${message}`;
+        if (level >= this.log_level && this.loggable_classes.includes(className)) {
+            const logPrefix = `[${LogLevel[level]}],[${className}]`;
+            const logMessage = `${Date.now()},${logPrefix},${message}`;
             switch (this.log_destination) {
                 case 'CONSOLE':
                     console.log(logMessage);
                     break;
                 case 'FILE':
                     try {
-                        fs.appendFileSync(`./logs/${className}.log`, `${logMessage}\n`);                        
+                        fs.appendFileSync(`./logs/${className}.log`, `${logMessage}\n`);
                     } catch (error) {
                         console.error(`Error writing to file: ${error}`);
                     }

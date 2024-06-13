@@ -136,15 +136,16 @@ export class CSPARQLWindow {
 
 
         if (max_window) {
-
             const activeWindow = this.active_windows.get(max_window);
             if (activeWindow !== undefined) {
                 if (activeWindow.len() > 0) {
                     this.logger.info(`Max Window ${this.name} [${JSON.stringify(max_window)})`, `CSPARQLWindow`);
                 }
             }
+        }
 
-            if (this.tick == Tick.TimeDriven) {
+        if (this.tick == Tick.TimeDriven) {
+            if (max_window !== null && max_window !== undefined) {
                 if (timestamp > this.time) {
                     this.time = timestamp;
                     this.emitter.emit('RStream', this.active_windows.get(max_window));
@@ -155,13 +156,16 @@ export class CSPARQLWindow {
                     } // this.logger.info("Window [" + max_window.open + "," + max_window.close + ") triggers. Content: " + this.active_windows.get(max_window), `CSPARQLWindow`);
                 }
             }
+            else {
+                this.logger.debug("No window to trigger", `CSPARQLWindow`);
+            }
         }
-
 
         for (let w of toEvict) {
             this.logger.debug("Evicting [" + w.open + "," + w.close + ")", `CSPARQLWindow`);
             this.active_windows.delete(w);
         }
+
 
     }
     compute_report(w: WindowInstance, content: QuadContainer, timestamp: number) {

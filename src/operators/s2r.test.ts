@@ -63,7 +63,7 @@ test('add_to_window', () => {
 
 test('test_scope', () => {
     let csparqlWindow = new CSPARQLWindow(":window1",10,2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0);
-    csparqlWindow.scope(4);
+    csparqlWindow.scope(0);
 
     let num_active_windows = csparqlWindow.active_windows.size;
     /**
@@ -76,6 +76,8 @@ test('test_scope', () => {
      * [4, 14)
      */
 
+    console.log(csparqlWindow.active_windows);
+    
     expect(num_active_windows).toBe(6);
 });
 test('test_evictions', () => {
