@@ -1,7 +1,7 @@
 import { DataFactory, Quad } from "n3";
 const { namedNode, literal, defaultGraph, quad } = DataFactory;
 import { CSPARQLWindow, ReportStrategy, Tick, WindowInstance, QuadContainer, computeWindowIfAbsent } from './s2r';
-
+const trigger_threshold = 2;
 /**
  * Generate data for the test cases.
  * @param {number} num_events - The number of events to generate.
@@ -50,12 +50,12 @@ describe('CSPARQLWindow', () => {
             namedNode('http://rsp.js/test_object'),
             defaultGraph(),
         );
-        const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000);
+        const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000, trigger_threshold);
         csparqlWindow.add(quad1, 0);
     });
 
     test('test_scope', () => {
-        const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000);
+        const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000, trigger_threshold);
         csparqlWindow.scope(4);
 
         const num_active_windows = csparqlWindow.active_windows.size;
@@ -73,7 +73,7 @@ describe('CSPARQLWindow', () => {
     });
 
     test('test_evictions', () => {
-        const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000);
+        const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000, trigger_threshold);
 
         generate_data(10, csparqlWindow);
 
@@ -84,7 +84,7 @@ describe('CSPARQLWindow', () => {
     test('test_stream_consumer', () => {
         const recevied_data = new Array<QuadContainer>();
         const received_elementes = new Array<Quad>;
-        const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000);
+        const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000, trigger_threshold);
         // register window consumer
         csparqlWindow.subscribe('RStream', function (data: QuadContainer) {
             console.log('Foo raised, Args:', data);
@@ -102,7 +102,7 @@ describe('CSPARQLWindow', () => {
 
 
     test('test_content_get', () => {
-        const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000);
+        const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000, trigger_threshold);
 
         // generate some data
         generate_data(10, csparqlWindow);
@@ -127,7 +127,7 @@ describe('CSPARQLWindow OOO', () => {
     const quad2 = quad(DataFactory.blankNode(), DataFactory.namedNode('predicate'), DataFactory.literal('object2'));
 
     beforeEach(() => {
-        window = new CSPARQLWindow('testWindow', width, slide, ReportStrategy.OnWindowClose, Tick.TimeDriven, startTime, maxDelay);
+        window = new CSPARQLWindow('testWindow', width, slide, ReportStrategy.OnWindowClose, Tick.TimeDriven, startTime, maxDelay, trigger_threshold);
     });
 
     afterEach(() => {
@@ -178,7 +178,7 @@ describe('CSPARQLWindow OOO', () => {
     });
 
     test('should trigger on window change', (done) => {
-        const report_window = new CSPARQLWindow('reportWindow', width, slide, ReportStrategy.OnWindowClose, Tick.TimeDriven, startTime, maxDelay);
+        const report_window = new CSPARQLWindow('reportWindow', width, slide, ReportStrategy.OnWindowClose, Tick.TimeDriven, startTime, maxDelay, trigger_threshold);
         const callback = jest.fn((data: QuadContainer) => {
             console.log('Callback called');
             expect(data.len()).toBe(1);
@@ -209,7 +209,7 @@ describe('CSPARQL Window Watermark Test', () => {
     beforeEach(() => {
         quad1 = {} as Quad
 
-        csparqlWindow = new CSPARQLWindow('testWindow', 10, 5, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 5);
+        csparqlWindow = new CSPARQLWindow('testWindow', 10, 5, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 5, trigger_threshold);
         window1 = new WindowInstance(0, 10);
         window2 = new WindowInstance(5, 15);
         quadContainer1 = new QuadContainer(new Set<Quad>([quad1]), 5);
@@ -252,7 +252,7 @@ describe('CSPARQLWindow emit_on_trigger', () => {
 
     beforeEach(() => {
         quad1 = {} as Quad;
-        csparqlWindow = new CSPARQLWindow('testWindow', 10, 5, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 5);
+        csparqlWindow = new CSPARQLWindow('testWindow', 10, 5, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 5, trigger_threshold);
         window1 = new WindowInstance(0, 10);
         quadContainer1 = new QuadContainer(new Set<Quad>([quad1]), 5);
         csparqlWindow.active_windows.set(window1, quadContainer1);
@@ -300,7 +300,7 @@ describe('CSPARQLWindow get quads from active windows', () => {
     beforeEach(() => {
         quad1 = {} as Quad;
 
-        csparqlWindow = new CSPARQLWindow('testWindow', 10, 5, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 5);
+        csparqlWindow = new CSPARQLWindow('testWindow', 10, 5, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 5, trigger_threshold);
         window1 = new WindowInstance(0, 10);
         quadContainer1 = new QuadContainer(new Set<Quad>([quad1]), 9);
         window2 = new WindowInstance(5, 15);
@@ -344,7 +344,7 @@ describe(`CSPARQLWindow computing window instances`, () => {
         namedNode('http://rsp.js/test_object'),
         defaultGraph(),
     );
-    csparqlWindow = new CSPARQLWindow('testWindow', 10, 5, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 5);
+    csparqlWindow = new CSPARQLWindow('testWindow', 10, 5, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 5, trigger_threshold);
     csparqlWindow.active_windows = existing_windows;
 
     it('should return the correct window instance for the given time', () => {
@@ -455,6 +455,40 @@ describe('Quad Container Test Suite', () => {
             expect(window_content.len()).toBe(4);
         }
     });
+
+
+    describe('test_the_numbered_window', () => {
+        const existing_windows: Map<WindowInstance, QuadContainer> = new Map<WindowInstance, QuadContainer>();
+        const window_one = new WindowInstance(-10, 0);
+        const window_two = new WindowInstance(0, 10);
+        const window_three = new WindowInstance(5, 15);
+        const window_four = new WindowInstance(10, 20);
+
+        existing_windows.set(window_one, new QuadContainer(new Set<Quad>(), 0));
+        existing_windows.set(window_two, new QuadContainer(new Set<Quad>(), 1));
+        existing_windows.set(window_three, new QuadContainer(new Set<Quad>(), 2));
+        existing_windows.set(window_four, new QuadContainer(new Set<Quad>(), 3));
+
+        let csparqlWindow: CSPARQLWindow;
+
+        let quad_one = quad(
+            namedNode('https://rsp.js/test_subject_0'),
+            namedNode('https://rsp.js/test_property'),
+            namedNode('http://rsp.js/test_object'),
+            defaultGraph(),
+        );
+
+
+        csparqlWindow = new CSPARQLWindow('test', 10, 5, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 5, trigger_threshold);
+        csparqlWindow.active_windows = existing_windows;
+
+
+        it('check_quad_trigger_threshold', ()=> {
+            csparqlWindow.add(quad_one,0);
+            csparqlWindow.add(quad_one, 1);
+            csparqlWindow.add(quad_one, 2);
+        })
+    }) ;
 });
 
 /**

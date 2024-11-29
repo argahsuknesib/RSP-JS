@@ -129,6 +129,7 @@ export class CSPARQLWindow {
     private current_watermark: number; // To track the current watermark of the window
     public max_delay: number; // The maximum delay allowed for a observation to be considered in the window
     public pending_triggers: Set<WindowInstance>; // Tracking windows that have pending triggers
+    private trigger_threshold: number; // The threshold for the number of events required to trigger.
     /**
      * Constructor for the CSPARQLWindow class.
      * @param {string} name - The name of the CSPARQL Window.
@@ -139,7 +140,7 @@ export class CSPARQLWindow {
      * @param {number} start_time - The start time of the window.
      * @param {number} max_delay - The maximum delay allowed for an observation to be considered in the window used for out-of-order processing.
      */
-    constructor(name: string, width: number, slide: number, report: ReportStrategy, tick: Tick, start_time: number, max_delay: number) {
+    constructor(name: string, width: number, slide: number, report: ReportStrategy, tick: Tick, start_time: number, max_delay: number, trigger_threshold: number) {
         this.name = name;
         this.width = width;
         this.slide = slide;
@@ -153,6 +154,7 @@ export class CSPARQLWindow {
         this.active_windows = new Map<WindowInstance, QuadContainer>();
         this.emitter = new EventEmitter();
         this.max_delay = max_delay;
+        this.trigger_threshold = trigger_threshold;
         this.pending_triggers = new Set<WindowInstance>();
     }
 
@@ -162,7 +164,7 @@ export class CSPARQLWindow {
      * @returns {QuadContainer | undefined} - The content of the window if it exists, else undefined.
      */
     getContent(timestamp: number): QuadContainer | undefined {
-        let max_window = null;
+        let max_window: WindowInstance | null = null;
         let max_time = Number.MAX_SAFE_INTEGER;
         this.active_windows.forEach((value: QuadContainer, window: WindowInstance) => {
             if (window.open <= timestamp && timestamp <= window.close) {
@@ -256,6 +258,7 @@ export class CSPARQLWindow {
      * @returns {void} - The function does not return anything.
      */
 
+
     trigger_window_content(watermark: number, timestamp: number): void {
         let max_window: WindowInstance | null = null;
         let max_time = 0;
@@ -265,37 +268,29 @@ export class CSPARQLWindow {
             if (this.compute_report(window, value, watermark)) {
                 if (window.close > max_time) {
                     max_time = window.close;
-                    max_window = window;
+                    max_window = window as WindowInstance;
                 }
+            }
+
+            if (max_window) {
+                if (max_window && max_window.has_triggered === false) {
+                    this.logger.info(`Window with bounds ${max_window.getDefinition()} is triggered for the window name ${this.name}`, `CSPARQLWindow`);
+                    const window_content = this.active_windows.get(max_window);
+                    if (window_content) {
+                        this.emitter.emit('RStream', window_content);
+                    }
+                    max_window.set_triggered();
+                    this.active_windows.delete(max_window);
+                } else {
+                    this.logger.info(`Window ${max_window.getDefinition()} has already been triggered.`, `CSPARQLWindow`);
+                }
+            } else {
+                this.logger.info(`No window meets the trigger criteria.`, `CSPARQLWindow`);
             }
         });
 
-        if (max_window) {
-            if (this.tick == Tick.TimeDriven && watermark >= max_time) {
-                setTimeout(() => {
-                    if (max_window && max_window.has_triggered === false) {
-                        if (watermark >= max_time + this.max_delay) {
-                            this.logger.info(`Watermark ${watermark} `, `CSPARQLWindow`);
-                            if (max_window) { }
-                            const windowToDelete = this.findWindowInstance(max_window);
-                            if (windowToDelete) {
-                                this.emitter.emit('RStream', this.active_windows.get(windowToDelete));
-                                this.logger.info(`Window with bounds [${windowToDelete.open},${windowToDelete.close}) ${windowToDelete.getDefinition()} is triggered for the window name ${this.name}`, `CSPARQLWindow`);
-                                max_window.set_triggered();
-                                this.active_windows.delete(windowToDelete);
-                            }
-                            this.time = timestamp;
-                        } else {
-                            this.logger.info(`Window will not trigger.`, `CSPARQLWindow`);
-                        }
-                    }
-                }, this.max_delay);
-            } else {
-                this.logger.info(`Window ${max_window} is out of the watermark and will not trigger.`, `CSPARQLWindow`);
-                console.error(`Window is out of the watermark and will not trigger`);
-            }
-        }
     }
+
 
     // Helper to find the matching instance in the Map
     private findWindowInstance(target: WindowInstance): WindowInstance | undefined {
@@ -338,14 +333,20 @@ export class CSPARQLWindow {
      * @param {number} timestamp - The timestamp of the event to be processed.
      * @returns {boolean} - True if the report is to be computed, else false.
      */
+
     compute_report(w: WindowInstance, content: QuadContainer, timestamp: number): boolean {
-        if (this.report == ReportStrategy.OnWindowClose) {
-            return w.close < timestamp;
-        } else if (this.report == ReportStrategy.OnContentChange) {
+        if (content.len() >= this.trigger_threshold) {
             return true;
         }
-        return false;
-
+        else {
+            return false;
+        }
+        // if (this.report == ReportStrategy.OnWindowClose) {
+        //     return w.close < timestamp && content.len() >= this.trigger_threshold;
+        // } else if (this.report == ReportStrategy.OnContentChange) {
+        //     return content.len() >= this.trigger_threshold;
+        // }
+        // return false;
     }
 
     /**

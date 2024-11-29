@@ -2,6 +2,7 @@ import { CSPARQLWindow, QuadContainer, ReportStrategy, Tick } from "./operators/
 import { R2ROperator } from "./operators/r2r";
 import { EventEmitter } from "events";
 import * as LOG_CONFIG from "./config/log_config.json";
+import * as LOG_ENGINE from "./config/log_engine.json";
 import { Logger } from "./util/Logger";
 import { LogLevel, LogDestination } from "./util/LoggerEnum";
 const N3 = require('n3');
@@ -82,12 +83,12 @@ export class RSPEngine {
             this.max_delay = 0;
         }
         const logLevel: LogLevel = LogLevel[LOG_CONFIG.log_level as keyof typeof LogLevel];
-        this.logger = new Logger(logLevel, LOG_CONFIG.classes_to_log, LOG_CONFIG.destination as unknown as LogDestination);      
+        this.logger = new Logger(logLevel, LOG_CONFIG.classes_to_log, LOG_CONFIG.destination as unknown as LogDestination);
         this.streams = new Map<string, RDFStream>();
         const parser = new RSPQLParser();
         const parsed_query = parser.parse(query);
         parsed_query.s2r.forEach((window: WindowDefinition) => {
-            const windowImpl = new CSPARQLWindow(window.window_name, window.width, window.slide, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, this.max_delay);
+            const windowImpl = new CSPARQLWindow(window.window_name, window.width, window.slide, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, this.max_delay, LOG_ENGINE.trigger_threshold);
             this.windows.push(windowImpl);
             const stream = new RDFStream(window.stream_name, windowImpl);
             this.streams.set(window.stream_name, stream);
@@ -102,7 +103,7 @@ export class RSPEngine {
     register() {
         const EventEmitter = require('events').EventEmitter;
         const emitter = new EventEmitter();
-        this.windows.forEach((window) => {            
+        this.windows.forEach((window) => {
             window.subscribe("RStream", async (data: QuadContainer) => {
                 if (data) {
                     if (data.len() > 0) {
@@ -111,13 +112,13 @@ export class RSPEngine {
                         for (const windowIt of this.windows) {
                             // filter out the current triggering one
                             if (windowIt != window) {
-                                const currentWindowData = windowIt.getContent(data.last_time_changed());                                
-                            //    this.logger.info(`Window Content ${data.len()} for time ${data.last_time_changed()} for window ${windowIt.getCSPARQLWindowDefinition()}`, `RSPEngine`);
+                                const currentWindowData = windowIt.getContent(data.last_time_changed());
+                                //    this.logger.info(`Window Content ${data.len()} for time ${data.last_time_changed()} for window ${windowIt.getCSPARQLWindowDefinition()}`, `RSPEngine`);
                                 if (currentWindowData) {
                                     // add the content of the other windows to the quad container
-                              //      this.logger.info(`Data length before adding ${data.len()}`, `RSPEngine`);            
+                                    //      this.logger.info(`Data length before adding ${data.len()}`, `RSPEngine`);            
                                     currentWindowData.elements.forEach((q) => data.add(q, data.last_time_changed()));
-                               //     this.logger.info(`Data length after adding ${data.len()}`, `RSPEngine`);            
+                                    //     this.logger.info(`Data length after adding ${data.len()}`, `RSPEngine`);            
                                 }
                             }
                         }
@@ -137,7 +138,7 @@ export class RSPEngine {
                             emitter.emit("RStream", object_with_timestamp);
                         });
                         bindingsStream.on('end', () => {
-                         //   this.logger.info(`Ended Comunica Binding Stream for window ${window.getCSPARQLWindowDefinition()} with window size ${data.len()}`, `RSPEngine`);
+                            //   this.logger.info(`Ended Comunica Binding Stream for window ${window.getCSPARQLWindowDefinition()} with window size ${data.len()}`, `RSPEngine`);
                         });
                         await bindingsStream;
                     }
