@@ -15,7 +15,8 @@ import { RSPQLParser, WindowDefinition } from "./rspql";
 export type binding_with_timestamp = {
     bindings: any,
     timestamp_from: number,
-    timestamp_to: number
+    timestamp_to: number,
+    definition: string
 }
 
 /**
@@ -132,7 +133,8 @@ export class RSPEngine {
                             const object_with_timestamp: binding_with_timestamp = {
                                 bindings: binding,
                                 timestamp_from: window.t0,
-                                timestamp_to: window.t0 + window.slide
+                                timestamp_to: window.t0 + window.slide,
+                                definition: window.getCSPARQLWindowDefinition()
                             }
                             window.t0 += window.slide;
                             emitter.emit("RStream", object_with_timestamp);
