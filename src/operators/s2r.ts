@@ -10,7 +10,8 @@ export enum ReportStrategy {
     NonEmptyContent,
     OnContentChange,
     OnWindowClose,
-    Periodic
+    Periodic,
+    CountBased
 }
 export enum Tick {
     TimeDriven,
@@ -260,36 +261,32 @@ export class CSPARQLWindow {
 
 
     trigger_window_content(watermark: number, timestamp: number): void {
+
         let max_window: WindowInstance | null = null;
         let max_time = 0;
 
-        // Identify the window to trigger
-        this.active_windows.forEach((value: QuadContainer, window: WindowInstance) => {
-            if (this.compute_report(window, value, watermark)) {
-                if (window.close > max_time) {
-                    max_time = window.close;
-                    max_window = window as WindowInstance;
-                }
-            }
+        // Identify the window to trigger for the count based for the evaluation.
+        // Later, it can be merged with the normal other time based strategies too.
 
-            if (max_window) {
-                if (max_window && max_window.has_triggered === false) {
-                    this.logger.info(`Window with bounds ${max_window.getDefinition()} is triggered for the window name ${this.name}`, `CSPARQLWindow`);
-                    const window_content = this.active_windows.get(max_window);
-                    if (window_content) {
-                        this.emitter.emit('RStream', window_content);
-                    }
-                    max_window.set_triggered();
-                    this.active_windows.delete(max_window);
-                } else {
-                    this.logger.info(`Window ${max_window.getDefinition()} has already been triggered.`, `CSPARQLWindow`);
-                }
-            } else {
-                this.logger.info(`No window meets the trigger criteria.`, `CSPARQLWindow`);
+        this.active_windows.forEach((value: QuadContainer, window: WindowInstance) => {
+            if (value.len() === this.trigger_threshold) {
+                max_window = window as WindowInstance;
             }
-        });
+        })
+
+        if (max_window) {
+            const window_content = this.active_windows.get(max_window);
+            if (window_content) {
+                this.emitter.emit('RStream', window_content);
+            }
+            this.active_windows.delete(max_window);
+        }
+
 
     }
+
+
+
 
 
     // Helper to find the matching instance in the Map
@@ -335,18 +332,15 @@ export class CSPARQLWindow {
      */
 
     compute_report(w: WindowInstance, content: QuadContainer, timestamp: number): boolean {
-        if (content.len() >= this.trigger_threshold) {
+        if (this.report == ReportStrategy.OnWindowClose) {
+            return w.close < timestamp && content.len() >= this.trigger_threshold;
+        } else if (this.report == ReportStrategy.OnContentChange) {
+            return content.len() >= this.trigger_threshold;
+        } else if (this.report == ReportStrategy.CountBased && content.len() >= this.trigger_threshold) {
             return true;
-        }
-        else {
+        } else {
             return false;
         }
-        // if (this.report == ReportStrategy.OnWindowClose) {
-        //     return w.close < timestamp && content.len() >= this.trigger_threshold;
-        // } else if (this.report == ReportStrategy.OnContentChange) {
-        //     return content.len() >= this.trigger_threshold;
-        // }
-        // return false;
     }
 
     /**
