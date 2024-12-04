@@ -276,8 +276,10 @@ export class CSPARQLWindow {
 
         if (max_window) {
             const window_content = this.active_windows.get(max_window);
-            if (window_content) {
+            const windowToDelete = this.findWindowInstance(max_window);
+            if (window_content && windowToDelete) {
                 this.emitter.emit('RStream', window_content);
+                this.logger.info(`Window with bounds [${windowToDelete.open},${windowToDelete.close}) ${windowToDelete.getDefinition()} is triggered for the window name ${this.name}`, `CSPARQLWindow`);
             }
             this.active_windows.delete(max_window);
         }
