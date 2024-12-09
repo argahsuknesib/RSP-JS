@@ -284,8 +284,6 @@ export class CSPARQLWindow extends EventEmitter {
             }
             this.active_windows.delete(max_window);
         }
-
-
     }
 
 
