@@ -116,7 +116,7 @@ export class QuadContainer {
  * The class is responsible for managing the windows, processing the events, and emitting the triggers based on the report strategy.
  * The class also handles the out-of-order processing of the events based on the maximum delay allowed for the events and the watermark.
  */
-export class CSPARQLWindow {
+export class CSPARQLWindow extends EventEmitter {
     width: number; // The width of the window
     slide: number; // The slide of the window
     time: number; // The current time of the window
@@ -142,6 +142,7 @@ export class CSPARQLWindow {
      * @param {number} max_delay - The maximum delay allowed for an observation to be considered in the window used for out-of-order processing.
      */
     constructor(name: string, width: number, slide: number, report: ReportStrategy, tick: Tick, start_time: number, max_delay: number, trigger_threshold: number) {
+        super();
         this.name = name;
         this.width = width;
         this.slide = slide;
@@ -353,10 +354,10 @@ export class CSPARQLWindow {
     scope(t_e: number) {
         const c_sup = Math.ceil((Math.abs(t_e - this.t0) / this.slide)) * this.slide;
         // let o_i = c_sup - this.width;
-        let o_i = t_e ; // Window will start from the event timestamp dynamically rather than a generated window timestamp t0.
+        let o_i = t_e; // Window will start from the event timestamp dynamically rather than a generated window timestamp t0.
         console.log(`Scope the window for the event at time ${t_e}`);
         console.log(`${c_sup} - ${this.width} = ${o_i}`);
-        while (o_i <= t_e + this.width)   {
+        while (o_i <= t_e + this.width) {
             computeWindowIfAbsent(this.active_windows, new WindowInstance(o_i, o_i + this.width), () => new QuadContainer(new Set<Quad>(), 0));
             o_i += this.slide;
         }
