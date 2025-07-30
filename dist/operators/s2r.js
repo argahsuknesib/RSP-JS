@@ -129,7 +129,7 @@ exports.QuadContainer = QuadContainer;
  * The class is responsible for managing the windows, processing the events, and emitting the triggers based on the report strategy.
  * The class also handles the out-of-order processing of the events based on the maximum delay allowed for the events and the watermark.
  */
-class CSPARQLWindow {
+class CSPARQLWindow extends events_1.EventEmitter {
     /**
      * Constructor for the CSPARQLWindow class.
      * @param {string} name - The name of the CSPARQL Window.
@@ -141,6 +141,7 @@ class CSPARQLWindow {
      * @param {number} max_delay - The maximum delay allowed for an observation to be considered in the window used for out-of-order processing.
      */
     constructor(name, width, slide, report, tick, start_time, max_delay, trigger_threshold) {
+        super();
         this.name = name;
         this.width = width;
         this.slide = slide;

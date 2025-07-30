@@ -93,7 +93,7 @@ export class RSPEngine {
             const stream = new RDFStream(window.stream_name, windowImpl);
             this.streams.set(window.stream_name, stream);
         })
-        this.r2r = new R2ROperator(parsed_query.sparql);
+        this.r2r = new R2ROperator(parsed_query.sparql, '');
 
     }
     /**

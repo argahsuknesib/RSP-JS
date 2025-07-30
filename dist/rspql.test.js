@@ -46,6 +46,7 @@ test('test_single_window', () => __awaiter(void 0, void 0, void 0, function* () 
 test('test_multiple_window', () => __awaiter(void 0, void 0, void 0, function* () {
     const parser = new rspql_1.RSPQLParser();
     const parsed_query = parser.parse(advanced_query);
+    console.log(parsed_query);
     const expected_windows = [{ window_name: "https://rsp.js/w1",
             stream_name: "https://rsp.js/stream1",
             width: 10,

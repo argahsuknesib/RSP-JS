@@ -36,7 +36,7 @@ exports.RSPEngine = exports.RDFStream = void 0;
 const s2r_1 = require("./operators/s2r");
 const r2r_1 = require("./operators/r2r");
 const LOG_CONFIG = __importStar(require("./config/log_config.json"));
-const LOG_ENGINE = __importStar(require("./config/log_engine.json"));
+const ENGINE_CONFIG = __importStar(require("./config/log_engine.json"));
 const Logger_1 = require("./util/Logger");
 const LoggerEnum_1 = require("./util/LoggerEnum");
 const N3 = require('n3');
@@ -100,12 +100,12 @@ class RSPEngine {
         const parser = new rspql_1.RSPQLParser();
         const parsed_query = parser.parse(query);
         parsed_query.s2r.forEach((window) => {
-            const windowImpl = new s2r_1.CSPARQLWindow(window.window_name, window.width, window.slide, s2r_1.ReportStrategy.OnWindowClose, s2r_1.Tick.TimeDriven, 0, this.max_delay, LOG_ENGINE.trigger_threshold);
+            const windowImpl = new s2r_1.CSPARQLWindow(window.window_name, window.width, window.slide, s2r_1.ReportStrategy.OnWindowClose, s2r_1.Tick.TimeDriven, 0, this.max_delay, ENGINE_CONFIG.trigger_threshold);
             this.windows.push(windowImpl);
             const stream = new RDFStream(window.stream_name, windowImpl);
             this.streams.set(window.stream_name, stream);
         });
-        this.r2r = new r2r_1.R2ROperator(parsed_query.sparql);
+        this.r2r = new r2r_1.R2ROperator(parsed_query.sparql, '');
     }
     /**
      * Register the RSP Engine to start processing the data.
@@ -143,8 +143,7 @@ class RSPEngine {
                             const object_with_timestamp = {
                                 bindings: binding,
                                 timestamp_from: window.t0,
-                                timestamp_to: window.t0 + window.slide,
-                                definition: window.getCSPARQLWindowDefinition()
+                                timestamp_to: window.t0 + window.slide
                             };
                             window.t0 += window.slide;
                             emitter.emit("RStream", object_with_timestamp);
@@ -184,36 +183,6 @@ class RSPEngine {
             streams.push(stream.name);
         });
         return streams;
-    }
-    waitForWindowData(windowIt, targetLength, timestamp, interval) {
-        return __awaiter(this, void 0, void 0, function* () {
-            return new Promise((resolve) => {
-                const checkCondition = () => {
-                    const currentWindowData = windowIt.getContent(timestamp);
-                    if (currentWindowData && currentWindowData.elements.size === targetLength) {
-                        resolve(currentWindowData);
-                    }
-                    else {
-                        setTimeout(checkCondition, interval);
-                    }
-                };
-                checkCondition();
-            });
-        });
-    }
-    processTrigger(window, allWindows, data, targetLength) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const interval = 100;
-            for (const windowIteration of allWindows) {
-                if (windowIteration !== window) {
-                    const timestamp = data.last_time_changed();
-                    const current_window_data = yield this.waitForWindowData(windowIteration, targetLength, timestamp, interval);
-                    if (current_window_data) {
-                        current_window_data.elements.forEach((q) => data.add(q, timestamp));
-                    }
-                }
-            }
-        });
     }
 }
 exports.RSPEngine = RSPEngine;

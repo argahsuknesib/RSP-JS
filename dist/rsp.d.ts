@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { CSPARQLWindow, QuadContainer } from "./operators/s2r";
+import { CSPARQLWindow } from "./operators/s2r";
 import { EventEmitter } from "events";
 import { Logger } from "./util/Logger";
 import { Quad } from 'n3';
@@ -7,7 +7,6 @@ export type binding_with_timestamp = {
     bindings: any;
     timestamp_from: number;
     timestamp_to: number;
-    definition: string;
 };
 /**
  * RDF Stream Class to represent the stream of RDF Data.
@@ -71,6 +70,4 @@ export declare class RSPEngine {
      * @returns {string[]} - The list of all the streams in the RSP Engine.
      */
     get_all_streams(): string[];
-    waitForWindowData(windowIt: CSPARQLWindow, targetLength: number, timestamp: number, interval: number): Promise<QuadContainer>;
-    processTrigger(window: CSPARQLWindow, allWindows: CSPARQLWindow[], data: QuadContainer, targetLength: number): Promise<void>;
 }

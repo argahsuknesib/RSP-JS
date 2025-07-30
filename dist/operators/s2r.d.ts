@@ -80,7 +80,7 @@ export declare class QuadContainer {
  * The class is responsible for managing the windows, processing the events, and emitting the triggers based on the report strategy.
  * The class also handles the out-of-order processing of the events based on the maximum delay allowed for the events and the watermark.
  */
-export declare class CSPARQLWindow {
+export declare class CSPARQLWindow extends EventEmitter {
     width: number;
     slide: number;
     time: number;
