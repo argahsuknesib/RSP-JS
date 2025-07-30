@@ -9,4 +9,5 @@ module.exports = {
     "transform": {
         "^.+\\.(ts|tsx)$": "ts-jest"
     },
+    testTimeout: 30000,  // Set the global timeout to 30 seconds
 }

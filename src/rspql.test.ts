@@ -43,6 +43,8 @@ test('test_single_window', async () => {
 test('test_multiple_window', async () => {
     const parser = new RSPQLParser();
     const parsed_query = parser.parse(advanced_query);
+    console.log(parsed_query);
+    
 
     const expected_windows = [{window_name: "https://rsp.js/w1",
         stream_name: "https://rsp.js/stream1",
