@@ -153,7 +153,7 @@ export class CSPARQLWindow {
     }
 
     scope(t_e:number){
-        let c_sup =  Math.ceil(( Math.abs(t_e - this.t0) / this.slide)) * this.slide;
+        let c_sup =  ( Math.abs(t_e - this.t0) / this.slide) * this.slide;
         let o_i = c_sup - this.width;
         console.debug("Calculating the Windows to Open. First one opens at [" + o_i + "] and closes at [" + c_sup + "]");
         do {
