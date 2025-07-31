@@ -7,6 +7,8 @@ import { LogLevel, LogDestination } from "./util/LoggerEnum";
 const N3 = require('n3');
 const { DataFactory } = N3;
 const { namedNode } = DataFactory;
+import { LogLevel as LogLevelEnum } from "./util/LoggerEnum";
+import { LogDestination as LogDestinationEnum } from "./util/LoggerEnum";
 // @ts-ignore
 import { Quad } from 'n3';
 import { RSPQLParser, WindowDefinition } from "./rspql";

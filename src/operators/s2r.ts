@@ -354,7 +354,7 @@ export class CSPARQLWindow {
      * @returns {void} - The function does not return anything.
      */
     scope(t_e: number) {
-        const c_sup = Math.ceil((Math.abs(t_e - this.t0) / this.slide)) * this.slide;
+        const c_sup = (Math.abs(t_e - this.t0) / this.slide) * this.slide;
         let o_i = c_sup - this.width;
         console.log(`Scope the window for the event at time ${t_e}`);
         console.log(`${c_sup} - ${this.width} = ${o_i}`);
