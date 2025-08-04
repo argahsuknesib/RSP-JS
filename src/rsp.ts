@@ -65,6 +65,9 @@ export class RSPEngine {
         let emitter = new EventEmitter();
         this.windows.forEach((window) => {
             window.subscribe("RStream", async (data: QuadContainer) => {
+                if (data.elements.size === 0) {
+                    return;
+                }
                 this.logger.info(`Received window content ${data} for time ${data.last_time_changed()}`, `RSPEngine`);
                 // iterate over all the windows
                 for (let windowIt of this.windows) {
