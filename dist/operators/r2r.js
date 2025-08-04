@@ -47,7 +47,7 @@ class R2ROperator {
         this.query = query;
         this.staticData = new Set();
         const log_level = Logger_1.LogLevel[LOG_CONFIG.log_level];
-        this.logger = new Logger_1.Logger(log_level, LOG_CONFIG.classes_to_log, Logger_1.LogDestination.CONSOLE);
+        this.logger = new Logger_1.Logger(log_level, LOG_CONFIG.classes_to_log, LOG_CONFIG.destination);
         this.logger.info("R2ROperator initialized with query: " + query, "R2ROperator");
     }
     addStaticData(quad) {

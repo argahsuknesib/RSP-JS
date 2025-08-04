@@ -129,14 +129,19 @@ class CSPARQLWindow {
         return false;
     }
     scope(t_e) {
-        let c_sup = (Math.abs(t_e - this.t0) / this.slide) * this.slide;
-        let o_i = c_sup - this.width;
-        console.debug("Calculating the Windows to Open. First one opens at [" + o_i + "] and closes at [" + c_sup + "]");
-        do {
+        if (this.t0 === 0) {
+            this.t0 = t_e; // use event timestamp as dynamic zero
+        }
+        // Calculate the first window start relative to t0 that is <= t_e
+        // i.e. floor instead of ceil for the window start
+        let firstWindowStart = Math.floor((t_e - this.t0) / this.slide) * this.slide + this.t0;
+        let o_i = firstWindowStart - this.width + this.slide; // start generating from this window
+        console.debug("Calculating the Windows to Open. First one opens at [" + o_i + "] and closes at [" + (o_i + this.width) + "]");
+        while (o_i <= t_e) {
             console.debug("Computing Window [" + o_i + "," + (o_i + this.width) + ") if absent");
             computeWindowIfAbsent(this.active_windows, new WindowInstance(o_i, o_i + this.width), () => new QuadContainer(new Set(), 0));
             o_i += this.slide;
-        } while (o_i <= t_e);
+        }
     }
     subscribe(output, call_back) {
         this.emitter.on(output, call_back);

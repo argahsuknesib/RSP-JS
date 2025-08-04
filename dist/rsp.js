@@ -82,7 +82,7 @@ class RSPEngine {
                 if (data.elements.size === 0) {
                     return;
                 }
-                this.logger.info(`Received window content ${data} for time ${data.last_time_changed()}`, `RSPEngine`);
+                this.logger.info(`Received window content ${data} for time ${data.last_time_changed()} with size ${data.elements.size}`, `RSPEngine`);
                 // iterate over all the windows
                 for (let windowIt of this.windows) {
                     // filter out the current triggering one
