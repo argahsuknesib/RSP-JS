@@ -163,10 +163,10 @@ export class CSPARQLWindow {
      */
     getContent(timestamp: number): QuadContainer | undefined {
         let max_window = null;
-        let max_time = Number.MAX_SAFE_INTEGER;
+        let max_time = Number.MIN_SAFE_INTEGER;
         this.active_windows.forEach((value: QuadContainer, window: WindowInstance) => {
             if (window.open <= timestamp && timestamp <= window.close) {
-                if (window.close < max_time) {
+                if (window.close > max_time) {
                     max_time = window.close;
                     max_window = window;
                 }
@@ -195,54 +195,44 @@ export class CSPARQLWindow {
             this.logger.info(`out_of_order_event_received`, `CSPARQLWindow`);
             let event_latency = this.time - timestamp;
             this.logger.info(`Event Latency : ${event_latency}`, `CSPARQLWindow`);
-            // Out of order event handling
-            console.error(`The event is late and has arrived out of order at time ${timestamp}`);
             if (t_e - this.time > this.max_delay) {
                 this.logger.info(`out_of_order_event_out_of_delay`, `CSPARQLWindow`);
-                // Discard the event if it is too late to be considered in the window based on a simple static heuristic pre-decided
-                // when the CSPARQL Window was initialized.
-                console.error("Late element [" + event + "] with timestamp [" + timestamp + "] is out of the allowed delay [" + this.max_delay + "]");
             }
             else if (t_e - this.time <= this.max_delay) {
                 this.logger.info(`out_of_order_event_within_delay`, `CSPARQLWindow`);
-                // The event is late but within the allowed delay, so we will add it to the specific window instance.
                 for (let w of this.active_windows.keys()) {
                     if (w.open <= t_e && t_e < w.close) {
                         let temp_window = this.active_windows.get(w);
                         if (temp_window) {
-                            // TODO: log this for when the event is added to the window and for the latency calculation
-                            this.logger.info(`adding_out_of_order_event ${event.subject.value} to the window ${this.name} with bounds ${w.getDefinition()} at time ${timestamp}`, `CSPARQLWindow`);
                             temp_window.add(event, t_e);
+                            if (!w.has_triggered) {
+                                this.pending_triggers.add(w);
+                            }
                         }
                     }
-                    else if (t_e >= w.close) {
-                        to_evict.add(w);
-                    }
                 }
+                // Immediately trigger eviction and emission after OOO event addition
+                this.trigger_window_content(this.current_watermark, timestamp);
             }
             this.time = timestamp;
         } else if (timestamp >= this.time) {
-            this.time = timestamp
+            this.time = timestamp;
             this.logger.info(`in_order_event_received`, `CSPARQLWindow`);
-            // In order event handling
             this.scope(t_e);
             for (let w of this.active_windows.keys()) {
-                console.debug(`Processing Window ${w.getDefinition()} for the event ${event} at time ${timestamp}`);
                 if (w.open <= t_e && t_e < w.close) {
-                    console.debug(`Adding the event ${event} to the window ${w.getDefinition()} at time ${timestamp}`);
                     let window_to_add = this.active_windows.get(w);
                     if (window_to_add) {
-                        this.logger.info(`adding_in_order_event ${event.subject.value} to the window ${this.name} with bounds ${w.getDefinition()} at time ${timestamp}`, `CSPARQLWindow`);
                         window_to_add.add(event, t_e);
+                        if (!w.has_triggered) {
+                            this.pending_triggers.add(w);
+                        }
                     }
                 }
-                else if (t_e >= w.close + this.max_delay && !w.has_triggered) {
-                    console.debug(`Scheduled to evict the window ${w.getDefinition()} at time ${timestamp}`);
-                    to_evict.add(w);
-                }
             }
-            this.update_watermark(t_e);
+            // Immediately trigger eviction and emission after in-order event addition
             this.trigger_window_content(this.current_watermark, timestamp);
+            this.update_watermark(t_e);
         }
     }
 
@@ -257,44 +247,28 @@ export class CSPARQLWindow {
      */
 
     trigger_window_content(watermark: number, timestamp: number): void {
-        let max_window: WindowInstance | null = null;
-        let max_time = 0;
-
-        // Identify the window to trigger
+        // Evict and emit windows based on report strategy and watermark
+        const windowsToEvict: WindowInstance[] = [];
         this.active_windows.forEach((value: QuadContainer, window: WindowInstance) => {
-            if (this.compute_report(window, value, watermark)) {
-                if (window.close > max_time) {
-                    max_time = window.close;
-                    max_window = window;
-                }
+            if (this.compute_report(window, value, watermark) && !window.has_triggered) {
+                windowsToEvict.push(window);
             }
         });
 
-        if (max_window) {
-            if (this.tick == Tick.TimeDriven && watermark >= max_time) {
-                setTimeout(() => {
-                    if (max_window && max_window.has_triggered === false) {
-                        if (watermark >= max_time + this.max_delay) {
-                            this.logger.info(`Watermark ${watermark} `, `CSPARQLWindow`);
-                            if (max_window) { }
-                            const windowToDelete = this.findWindowInstance(max_window);
-                            if (windowToDelete) {
-                                this.emitter.emit('RStream', this.active_windows.get(windowToDelete));
-                                this.logger.info(`Window with bounds [${windowToDelete.open},${windowToDelete.close}) ${windowToDelete.getDefinition()} is triggered for the window name ${this.name}`, `CSPARQLWindow`);
-                                max_window.set_triggered();
-                                this.active_windows.delete(windowToDelete);
-                            }
-                            this.time = timestamp;
-                        } else {
-                            this.logger.info(`Window will not trigger.`, `CSPARQLWindow`);
-                        }
-                    }
-                }, this.max_delay);
-            } else {
-                this.logger.info(`Window ${max_window} is out of the watermark and will not trigger.`, `CSPARQLWindow`);
-                console.error(`Window is out of the watermark and will not trigger`);
+        for (const window of windowsToEvict) {
+            const content = this.active_windows.get(window);
+            if (content && content.len() > 0) {
+                this.emitter.emit('RStream', content);
+                this.logger.info(`Window with bounds [${window.open},${window.close}) ${window.getDefinition()} is triggered for the window name ${this.name}`, `CSPARQLWindow`);
+                window.set_triggered();
+                this.active_windows.delete(window);
+                // Remove from pending triggers if present
+                if (this.pending_triggers.has(window)) {
+                    this.pending_triggers.delete(window);
+                }
             }
         }
+        this.time = timestamp;
     }
 
     // Helper to find the matching instance in the Map
@@ -316,6 +290,8 @@ export class CSPARQLWindow {
         if (new_time > this.current_watermark) {
             this.current_watermark = new_time;
             this.logger.info(`Watermark is increasing ${this.current_watermark} and time ${this.time}`, `CSPARQLWindow`);
+            // Trigger eviction and emission when watermark is updated
+            this.trigger_window_content(this.current_watermark, this.time);
         }
         else {
             console.error("Watermark is not increasing");
@@ -338,9 +314,9 @@ export class CSPARQLWindow {
      * @param {number} timestamp - The timestamp of the event to be processed.
      * @returns {boolean} - True if the report is to be computed, else false.
      */
-    compute_report(w: WindowInstance, content: QuadContainer, timestamp: number): boolean {
+    compute_report(w: WindowInstance, content: QuadContainer, watermark: number): boolean {
         if (this.report == ReportStrategy.OnWindowClose) {
-            return w.close < timestamp;
+            return w.close <= watermark;
         } else if (this.report == ReportStrategy.OnContentChange) {
             return true;
         }
@@ -354,12 +330,19 @@ export class CSPARQLWindow {
      * @returns {void} - The function does not return anything.
      */
     scope(t_e: number) {
-        const c_sup = (Math.abs(t_e - this.t0) / this.slide) * this.slide;
-        let o_i = c_sup - this.width;
-        console.log(`Scope the window for the event at time ${t_e}`);
-        console.log(`${c_sup} - ${this.width} = ${o_i}`);
+        if (this.t0 === 0) {
+            this.t0 = t_e; // use event timestamp as dynamic zero
+        }
+        // Calculate the first window start relative to t0 that is <= t_e
+        let o_i = Math.floor((t_e - this.t0 - this.width) / this.slide) * this.slide + this.t0;
+
+        // Ensure we include all windows that could contain t_e
         while (o_i <= t_e) {
-            computeWindowIfAbsent(this.active_windows, new WindowInstance(o_i, o_i + this.width), () => new QuadContainer(new Set<Quad>(), 0));
+            computeWindowIfAbsent(
+                this.active_windows,
+                new WindowInstance(o_i, o_i + this.width),
+                () => new QuadContainer(new Set<Quad>(), 0)
+            );
             o_i += this.slide;
         }
     }
@@ -397,6 +380,8 @@ export class CSPARQLWindow {
      */
     set_current_watermark(t: number) {
         this.current_watermark = t;
+        // Trigger eviction and emission when watermark is set
+        this.trigger_window_content(this.current_watermark, this.time);
     }
 
     /**

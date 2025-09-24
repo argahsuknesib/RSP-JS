@@ -106,3 +106,5 @@ typings/
 .tern-port
 
 # Removing the build directory
+
+CSPARQLWindow_Fixes_Report.md
