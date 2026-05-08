@@ -108,3 +108,4 @@ typings/
 # Removing the build directory
 
 CSPARQLWindow_Fixes_Report.md
+dist/
