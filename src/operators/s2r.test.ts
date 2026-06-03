@@ -116,6 +116,66 @@ describe('CSPARQLWindow', () => {
         const undefinedContent = csparqlWindow.getContent(20);
         expect(undefinedContent).toBeUndefined();
     });
+
+    test('getContent includes window.open and interior timestamps but excludes window.close', () => {
+        const csparqlWindow = new CSPARQLWindow(":window1", 10, 10, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000);
+        const window = new WindowInstance(0, 10);
+        const boundaryQuad = quad(
+            namedNode('https://rsp.js/test_subject_boundary'),
+            namedNode('http://rsp.js/test_property'),
+            namedNode('http://rsp.js/test_object'),
+            defaultGraph(),
+        );
+        const interiorQuad = quad(
+            namedNode('https://rsp.js/test_subject_interior'),
+            namedNode('http://rsp.js/test_property'),
+            namedNode('http://rsp.js/test_object'),
+            defaultGraph(),
+        );
+        const container = new QuadContainer(new Set<Quad>([boundaryQuad, interiorQuad]), 5);
+        csparqlWindow.active_windows.set(window, container);
+
+        const openBoundaryContent = csparqlWindow.getContent(0);
+        expect(openBoundaryContent).toBeDefined();
+        expect(openBoundaryContent?.elements.has(boundaryQuad)).toBe(true);
+        expect(openBoundaryContent?.elements.has(interiorQuad)).toBe(true);
+
+        const interiorContent = csparqlWindow.getContent(5);
+        expect(interiorContent).toBeDefined();
+        expect(interiorContent?.elements.has(boundaryQuad)).toBe(true);
+        expect(interiorContent?.elements.has(interiorQuad)).toBe(true);
+
+        const closeBoundaryContent = csparqlWindow.getContent(10);
+        expect(closeBoundaryContent).toBeUndefined();
+    });
+
+    test('adjacent windows do not duplicate close-boundary timestamps', () => {
+        const firstWindow = new WindowInstance(0, 10);
+        const secondWindow = new WindowInstance(10, 20);
+        const firstQuad = quad(
+            namedNode('https://rsp.js/test_subject_first'),
+            namedNode('http://rsp.js/test_property'),
+            namedNode('http://rsp.js/test_object'),
+            defaultGraph(),
+        );
+        const secondQuad = quad(
+            namedNode('https://rsp.js/test_subject_second'),
+            namedNode('http://rsp.js/test_property'),
+            namedNode('http://rsp.js/test_object'),
+            defaultGraph(),
+        );
+        const firstContainer = new QuadContainer(new Set<Quad>([firstQuad]), 9);
+        const secondContainer = new QuadContainer(new Set<Quad>([secondQuad]), 10);
+        const active_windows = new Map<WindowInstance, QuadContainer>();
+        active_windows.set(firstWindow, firstContainer);
+        active_windows.set(secondWindow, secondContainer);
+        const csparqlWindow = new CSPARQLWindow(":window1", 10, 10, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000);
+        csparqlWindow.active_windows = active_windows;
+
+        expect(csparqlWindow.getContent(9)).toBe(firstContainer);
+        expect(csparqlWindow.getContent(10)).toBe(secondContainer);
+        expect(csparqlWindow.getContent(10)).not.toBe(firstContainer);
+    });
 });
 
 describe('CSPARQLWindow OOO', () => {

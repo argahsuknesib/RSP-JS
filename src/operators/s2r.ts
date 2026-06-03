@@ -165,7 +165,7 @@ export class CSPARQLWindow {
         let max_window = null;
         let max_time = Number.MIN_SAFE_INTEGER;
         this.active_windows.forEach((value: QuadContainer, window: WindowInstance) => {
-            if (window.open <= timestamp && timestamp <= window.close) {
+            if (window.open <= timestamp && timestamp < window.close) {
                 if (window.close > max_time) {
                     max_time = window.close;
                     max_window = window;
