@@ -1,4 +1,4 @@
-import { CSPARQLWindow, QuadContainer, ReportStrategy, Tick } from "./operators/s2r";
+import { CSPARQLWindow, QuadContainer, ReportStrategy, Tick, WindowSemantics } from "./operators/s2r";
 import { R2ROperator } from "./operators/r2r";
 import { EventEmitter } from "events";
 import * as LOG_CONFIG from "./config/log_config.json";
@@ -16,7 +16,22 @@ import { RSPQLParser, WindowDefinition } from "./rspql";
 export type binding_with_timestamp = {
     bindings: any,
     timestamp_from: number,
-    timestamp_to: number
+    timestamp_to: number,
+    logical_trigger_time: number,
+    window_start: number,
+    window_end: number,
+    window_data_close_time: number,
+    result_emitted_at: number,
+    latency_from_logical_trigger_ms: number,
+    latency_from_window_close_ms: number,
+    window_number: number,
+    window_name: string,
+    window_semantics: WindowSemantics
+}
+
+export type RSPEngineOptions = {
+    max_delay?: number,
+    window_semantics?: WindowSemantics | "trailing" | "centered"
 }
 
 /**
@@ -62,6 +77,7 @@ export class RSPEngine {
     windows: Array<CSPARQLWindow>;
     streams: Map<string, RDFStream>;
     public max_delay: number;
+    public window_semantics: WindowSemantics;
     public log_enabled!: boolean;
     private r2r: R2ROperator;
     public logger: Logger;
@@ -73,9 +89,7 @@ export class RSPEngine {
      * @param {number} opts.max_delay - The maximum delay for the window to be processed in the case of late data arrival and out of order data.
      * This field is optional and defaults to 0 for no delay expected by the RSP Engine in processing of the data.
      */
-    constructor(query: string, opts?: {
-        max_delay?: number
-    }) {
+    constructor(query: string, opts?: RSPEngineOptions) {
         this.windows = new Array<CSPARQLWindow>();
         if (opts) {
             this.max_delay = opts.max_delay ? opts.max_delay : 0;
@@ -83,13 +97,14 @@ export class RSPEngine {
         else {
             this.max_delay = 0;
         }
+        this.window_semantics = this.resolveWindowSemantics((opts?.window_semantics ?? process.env.RSP_WINDOW_SEMANTICS) as string | undefined);
         const logLevel: LogLevel = LogLevel[LOG_CONFIG.log_level as keyof typeof LogLevel];
         this.logger = new Logger(logLevel, LOG_CONFIG.classes_to_log, LOG_CONFIG.destination as unknown as LogDestination);      
         this.streams = new Map<string, RDFStream>();
         const parser = new RSPQLParser();
         const parsed_query = parser.parse(query);
         parsed_query.s2r.forEach((window: WindowDefinition) => {
-            const windowImpl = new CSPARQLWindow(window.window_name, window.width, window.slide, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, this.max_delay);
+            const windowImpl = new CSPARQLWindow(window.window_name, window.width, window.slide, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, this.max_delay, this.window_semantics);
             this.windows.push(windowImpl);
             const stream = new RDFStream(window.stream_name, windowImpl);
             this.streams.set(window.stream_name, stream);
@@ -129,11 +144,47 @@ export class RSPEngine {
                         let time_end_query_processing = new Date().getTime();
                         this.logger.info(`Ended the execution of the R2R Operator for the window ${window.getCSPARQLWindowDefinition()} with window size ${data.len()}`, `RSPEngine`);
                         // this.logger.info(`Time taken for query processing for window ${window.getCSPARQLWindowDefinition()} is ${time_end_query_processing - time_start_query_processing} ms with window size ${data.len()}`, `RSPEngine`);
+                        const timestamp_from = data.window_start ?? window.t0;
+                        const timestamp_to = data.window_end ?? (window.t0 + window.slide);
+                        const logical_trigger_time = data.logical_trigger_time ?? timestamp_to;
+                        const window_data_close_time = data.window_data_close_time ?? timestamp_to;
+                        const result_emitted_at = data.result_emitted_at ?? window_data_close_time;
+                        const latency_from_logical_trigger_ms = data.latency_from_logical_trigger_ms ?? (result_emitted_at - logical_trigger_time);
+                        const latency_from_window_close_ms = data.latency_from_window_close_ms ?? (result_emitted_at - window_data_close_time);
+                        const window_number = data.window_number ?? 0;
+                        const window_name = data.window_name ?? window.name;
+                        const window_semantics = data.window_semantics ?? this.window_semantics;
+                        const emissionKey = [
+                            window_name,
+                            window_number,
+                            timestamp_from,
+                            timestamp_to,
+                            result_emitted_at,
+                            window_semantics
+                        ].join("|");
+                        if ((window as any)._seen_emission_keys === undefined) {
+                            (window as any)._seen_emission_keys = new Set<string>();
+                        }
+                        const seenEmissionKeys = (window as any)._seen_emission_keys as Set<string>;
+                        if (seenEmissionKeys.has(emissionKey)) {
+                            return;
+                        }
+                        seenEmissionKeys.add(emissionKey);
                         bindingsStream.on('data', (binding: any) => {
                             const object_with_timestamp: binding_with_timestamp = {
                                 bindings: binding,
-                                timestamp_from: window.t0,
-                                timestamp_to: window.t0 + window.slide
+                                timestamp_from,
+                                timestamp_to,
+                                logical_trigger_time,
+                                window_start: timestamp_from,
+                                window_end: timestamp_to,
+                                window_data_close_time,
+                                result_emitted_at,
+                                latency_from_logical_trigger_ms,
+                                latency_from_window_close_ms,
+                                window_number,
+                                window_name,
+                                window_semantics
                             }
                             window.t0 += window.slide;
                             emitter.emit("RStream", object_with_timestamp);
@@ -141,7 +192,6 @@ export class RSPEngine {
                         bindingsStream.on('end', () => {
                          //   this.logger.info(`Ended Comunica Binding Stream for window ${window.getCSPARQLWindowDefinition()} with window size ${data.len()}`, `RSPEngine`);
                         });
-                        await bindingsStream;
                     }
                 }
             });
@@ -176,6 +226,13 @@ export class RSPEngine {
             streams.push(stream.name);
         });
         return streams;
+    }
+
+    private resolveWindowSemantics(value?: string): WindowSemantics {
+        if (value && value.toLowerCase() === WindowSemantics.Centered) {
+            return WindowSemantics.Centered;
+        }
+        return WindowSemantics.Trailing;
     }
 
 

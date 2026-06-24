@@ -17,7 +17,13 @@ export enum Tick {
     TupleDriven,
     BatchDriven,
 }
+
+export enum WindowSemantics {
+    Trailing = "trailing",
+    Centered = "centered",
+}
 /* eslint-enable no-unused-vars */
+
 /**
  * WindowInstance class to represent the window instance of the CSPARQL Window.
  */
@@ -72,6 +78,18 @@ export class WindowInstance {
 export class QuadContainer {
     elements: Set<Quad>;
     last_time_stamp_changed: number;
+    timestamp_from?: number;
+    timestamp_to?: number;
+    logical_trigger_time?: number;
+    window_start?: number;
+    window_end?: number;
+    window_data_close_time?: number;
+    result_emitted_at?: number;
+    latency_from_logical_trigger_ms?: number;
+    latency_from_window_close_ms?: number;
+    window_number?: number;
+    window_name?: string;
+    window_semantics?: WindowSemantics;
     /** 
      * Constructor for the QuadContainer class.
      * @param {Set<Quad>} elements - The set of quads in the container.
@@ -120,6 +138,7 @@ export class CSPARQLWindow {
     slide: number; // The slide of the window
     time: number; // The current time of the window
     t0: number; // The start time of the window
+    window_semantics: WindowSemantics; // The semantics used for logical trigger timestamps
     active_windows: Map<WindowInstance, QuadContainer>; // The active windows in the window and the content of the window
     report: ReportStrategy; // The report strategy for the window
     logger: Logger; // Logger for the CSPARQL Window
@@ -129,6 +148,7 @@ export class CSPARQLWindow {
     private current_watermark: number; // To track the current watermark of the window
     public max_delay: number; // The maximum delay allowed for a observation to be considered in the window
     public pending_triggers: Set<WindowInstance>; // Tracking windows that have pending triggers
+    private emitted_window_count: number;
     /**
      * Constructor for the CSPARQLWindow class.
      * @param {string} name - The name of the CSPARQL Window.
@@ -139,7 +159,7 @@ export class CSPARQLWindow {
      * @param {number} start_time - The start time of the window.
      * @param {number} max_delay - The maximum delay allowed for an observation to be considered in the window used for out-of-order processing.
      */
-    constructor(name: string, width: number, slide: number, report: ReportStrategy, tick: Tick, start_time: number, max_delay: number) {
+    constructor(name: string, width: number, slide: number, report: ReportStrategy, tick: Tick, start_time: number, max_delay: number, window_semantics: WindowSemantics = WindowSemantics.Trailing) {
         this.name = name;
         this.width = width;
         this.slide = slide;
@@ -150,10 +170,12 @@ export class CSPARQLWindow {
         this.time = start_time;
         this.current_watermark = start_time;
         this.t0 = start_time;
+        this.window_semantics = window_semantics;
         this.active_windows = new Map<WindowInstance, QuadContainer>();
         this.emitter = new EventEmitter();
         this.max_delay = max_delay;
         this.pending_triggers = new Set<WindowInstance>();
+        this.emitted_window_count = 0;
     }
 
     /**
@@ -185,54 +207,59 @@ export class CSPARQLWindow {
      * @param {number} timestamp - The timestamp of the event.
      * @returns {void} - The function does not return anything.
      */
-
     add(event: Quad, timestamp: number): void {
         this.logger.info(`adding_event_to_the_window`, `CSPARQLWindow`);
         console.debug(`Adding [" + ${event} + "] at time : ${timestamp} and watermark ${this.current_watermark}`);
-        let t_e = timestamp;
-        let to_evict = new Set<WindowInstance>();
-        if (this.time > timestamp) {
-            this.logger.info(`out_of_order_event_received`, `CSPARQLWindow`);
-            let event_latency = this.time - timestamp;
-            this.logger.info(`Event Latency : ${event_latency}`, `CSPARQLWindow`);
-            if (t_e - this.time > this.max_delay) {
-                this.logger.info(`out_of_order_event_out_of_delay`, `CSPARQLWindow`);
-            }
-            else if (t_e - this.time <= this.max_delay) {
-                this.logger.info(`out_of_order_event_within_delay`, `CSPARQLWindow`);
-                for (let w of this.active_windows.keys()) {
-                    if (w.open <= t_e && t_e < w.close) {
-                        let temp_window = this.active_windows.get(w);
-                        if (temp_window) {
-                            temp_window.add(event, t_e);
-                            if (!w.has_triggered) {
-                                this.pending_triggers.add(w);
-                            }
-                        }
+
+        if (this.if_event_late(timestamp)) {
+            this.handle_out_of_order_event(event, timestamp);
+        } else {
+            this.handle_in_order_event(event, timestamp);
+        }
+    }
+
+    private handle_in_order_event(event: Quad, timestamp: number): void {
+        this.time = timestamp;
+        this.logger.info(`in_order_event_received`, `CSPARQLWindow`);
+        this.scope(timestamp);
+        for (let w of this.active_windows.keys()) {
+            if (w.open <= timestamp && timestamp < w.close) {
+                let window_to_add = this.active_windows.get(w);
+                if (window_to_add) {
+                    window_to_add.add(event, timestamp);
+                    if (!w.has_triggered) {
+                        this.pending_triggers.add(w);
                     }
                 }
-                // Immediately trigger eviction and emission after OOO event addition
-                this.trigger_window_content(this.current_watermark, timestamp);
             }
-            this.time = timestamp;
-        } else if (timestamp >= this.time) {
-            this.time = timestamp;
-            this.logger.info(`in_order_event_received`, `CSPARQLWindow`);
-            this.scope(t_e);
+        }
+        this.trigger_window_content(this.current_watermark, timestamp);
+        this.update_watermark(timestamp);
+    }
+
+    private handle_out_of_order_event(event: Quad, timestamp: number): void {
+        this.logger.info(`out_of_order_event_received`, `CSPARQLWindow`);
+        const event_latency = this.time - timestamp;
+        this.logger.info(`Event Latency : ${event_latency}`, `CSPARQLWindow`);
+
+        if (event_latency <= this.max_delay) {
+            this.logger.info(`out_of_order_event_within_delay`, `CSPARQLWindow`);
             for (let w of this.active_windows.keys()) {
-                if (w.open <= t_e && t_e < w.close) {
-                    let window_to_add = this.active_windows.get(w);
-                    if (window_to_add) {
-                        window_to_add.add(event, t_e);
+                if (w.open <= timestamp && timestamp < w.close) {
+                    const temp_window = this.active_windows.get(w);
+                    if (temp_window) {
+                        temp_window.add(event, timestamp);
                         if (!w.has_triggered) {
                             this.pending_triggers.add(w);
                         }
                     }
                 }
             }
-            // Immediately trigger eviction and emission after in-order event addition
+            // Immediately trigger eviction and emission after OOO event addition
             this.trigger_window_content(this.current_watermark, timestamp);
-            this.update_watermark(t_e);
+            this.time = timestamp;
+        } else {
+            this.logger.info(`out_of_order_event_out_of_delay`, `CSPARQLWindow`);
         }
     }
 
@@ -245,7 +272,6 @@ export class CSPARQLWindow {
      * @param {number} watermark - The current watermark which needs to be processed.
      * @returns {void} - The function does not return anything.
      */
-
     trigger_window_content(watermark: number, timestamp: number): void {
         // Evict and emit windows based on report strategy and watermark
         const windowsToEvict: WindowInstance[] = [];
@@ -258,8 +284,24 @@ export class CSPARQLWindow {
         for (const window of windowsToEvict) {
             const content = this.active_windows.get(window);
             if (content && content.len() > 0) {
+                const resultEmittedAt = watermark;
+                const logicalTriggerTime = this.getLogicalTriggerTime(window);
+                const windowNumber = this.emitted_window_count + 1;
+                content.timestamp_from = window.open;
+                content.timestamp_to = window.close;
+                content.logical_trigger_time = logicalTriggerTime;
+                content.window_start = window.open;
+                content.window_end = window.close;
+                content.window_data_close_time = window.close;
+                content.result_emitted_at = resultEmittedAt;
+                content.latency_from_logical_trigger_ms = resultEmittedAt - logicalTriggerTime;
+                content.latency_from_window_close_ms = resultEmittedAt - window.close;
+                content.window_number = windowNumber;
+                content.window_name = this.name;
+                content.window_semantics = this.window_semantics;
                 this.emitter.emit('RStream', content);
-                this.logger.info(`Window with bounds [${window.open},${window.close}) ${window.getDefinition()} is triggered for the window name ${this.name}`, `CSPARQLWindow`);
+                this.emitted_window_count = windowNumber;
+                this.logger.info(`Window with bounds [${window.open},${window.close}) ${window.getDefinition()} is triggered for the window name ${this.name} using ${this.window_semantics} semantics`, `CSPARQLWindow`);
                 window.set_triggered();
                 this.active_windows.delete(window);
                 // Remove from pending triggers if present
@@ -282,7 +324,7 @@ export class CSPARQLWindow {
     }
 
     /**
-     * Updating the watermark. 
+     * Updating the watermark.
      * @param {number} new_time - The new watermark to be set.
      * @returns {void} - The function does not return anything.
      */
@@ -347,9 +389,15 @@ export class CSPARQLWindow {
         }
     }
 
+    private getLogicalTriggerTime(window: WindowInstance): number {
+        if (this.window_semantics === WindowSemantics.Centered) {
+            return window.open + Math.floor(this.width / 2);
+        }
+        return window.close;
+    }
 
     /* eslint-disable no-unused-vars */
-    /** 
+    /**
      * Subscribe to the window based on the output stream and the callback function.
      * @param {'RStream' | 'IStream' | 'DStream'} output - The output stream to which the window is to be subscribed. The output stream can be one of {'RStream', 'IStream', 'DStream'}.
      * @param {(QuadContainer) => void} call_back - The callback function to be called when the window emits the triggers.
@@ -402,6 +450,7 @@ export class CSPARQLWindow {
         current_watermark: ${this.current_watermark},
         report_strategy: ${ReportStrategy[this.report]},
         tick: ${Tick[this.tick]},
+        window_semantics: ${this.window_semantics},
         active_windows: [${windowDefinitions.join(", ")}]
     }`;
     }

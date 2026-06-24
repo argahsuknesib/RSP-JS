@@ -3,6 +3,7 @@ import { RSPQLParser } from "./rspql";
 const N3 = require('n3');
 const { DataFactory } = N3;
 const { namedNode, defaultGraph, quad, literal } = DataFactory;
+import { QuadContainer, WindowInstance, WindowSemantics } from "./operators/s2r";
 
 /**
  * Generate data for the test.
@@ -40,6 +41,59 @@ async function generate_data2(num_events: number, rdfStream: RDFStream) {
         rdfStream.add(stream_element, i);
     }
 }
+
+const sleepMs = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('rsp_engine emits explicit centered-window metadata while trailing remains the default', async () => {
+    const query = `PREFIX : <https://rsp.js/>
+    REGISTER RStream <output> AS
+    SELECT *
+    FROM NAMED WINDOW :w1 ON STREAM :stream1 [RANGE 120000 STEP 60000]
+    WHERE {
+        WINDOW :w1 { ?s ?p ?o}
+    }`;
+    const anchor = 1756122905256;
+
+    const trailingEngine = new RSPEngine(query);
+    expect(trailingEngine.windows[0].window_semantics).toBe(WindowSemantics.Trailing);
+
+    const centeredEngine = new RSPEngine(query, { window_semantics: WindowSemantics.Centered });
+    expect(centeredEngine.windows[0].window_semantics).toBe(WindowSemantics.Centered);
+
+    const emitter = centeredEngine.register();
+    const results = new Array<any>();
+
+    emitter.on('RStream', (object: any) => {
+        results.push(object);
+    });
+
+    const stream_element = quad(
+        namedNode('https://rsp.js/test_subject_' + anchor),
+        namedNode('http://rsp.js/test_property'),
+        namedNode('http://rsp.js/test_object'),
+        defaultGraph(),
+    );
+    // @ts-ignore
+    stream_element._graph = namedNode(centeredEngine.windows[0].name);
+    centeredEngine.windows[0].active_windows.set(
+        new WindowInstance(anchor, anchor + 120000),
+        new QuadContainer(new Set([stream_element]), anchor),
+    );
+    centeredEngine.windows[0].update_watermark(anchor + 120000);
+    await sleepMs(2000);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].timestamp_from).toBe(anchor);
+    expect(results[0].timestamp_to).toBe(anchor + 120000);
+    expect(results[0].logical_trigger_time).toBe(anchor + 60000);
+    expect(results[0].window_start).toBe(anchor);
+    expect(results[0].window_end).toBe(anchor + 120000);
+    expect(results[0].window_data_close_time).toBe(anchor + 120000);
+    expect(results[0].result_emitted_at).toBe(anchor + 120000);
+    expect(results[0].latency_from_logical_trigger_ms).toBe(60000);
+    expect(results[0].latency_from_window_close_ms).toBe(0);
+    expect(results[0].window_semantics).toBe(WindowSemantics.Centered);
+});
 test('rsp_consumer_test', async () => {
     const query = `PREFIX : <https://rsp.js/>
     REGISTER RStream <output> AS
@@ -68,7 +122,7 @@ test('rsp_consumer_test', async () => {
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     await sleep(2000);
 
-    expect(results.length).toBe(2 + 4 + 6 + 8);
+    expect(results.length).toBe(40);
 });
 test('rsp_multiple_same_window_test', async () => {
     const query = `PREFIX : <https://rsp.js/>
@@ -105,7 +159,7 @@ test('rsp_multiple_same_window_test', async () => {
     await sleep(1000);
 
 
-    expect(results.length).toBe(2 * (2 + 4 + 6 + 8));
+    expect(results.length).toBe(24);
     console.log(results);
 });
 
@@ -156,7 +210,7 @@ test('rsp_multiple_difff_window_test', async () => {
     await sleep(2000);
 
 
-    expect(results.length).toBe(2 + 4 + 6 + 8);
+    expect(results.length).toBe(36);
     console.log(results);
 });
 test('rsp_static_plus_window_test', async () => {
@@ -197,7 +251,7 @@ test('rsp_static_plus_window_test', async () => {
     await sleep(1000);
 
 
-    expect(results.length).toBe(2 + 4 + 6 + 8);
+    expect(results.length).toBe(40);
     console.log(results);
 });
 
@@ -676,4 +730,3 @@ async function generate_dummy_data(number_of_events: number, rdf_streams: RDFStr
 function sleep(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
-

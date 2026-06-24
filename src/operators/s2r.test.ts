@@ -1,6 +1,6 @@
 import { DataFactory, Quad } from "n3";
 const { namedNode, literal, defaultGraph, quad } = DataFactory;
-import { CSPARQLWindow, ReportStrategy, Tick, WindowInstance, QuadContainer, computeWindowIfAbsent } from './s2r';
+import { CSPARQLWindow, ReportStrategy, Tick, WindowInstance, QuadContainer, computeWindowIfAbsent, WindowSemantics } from './s2r';
 
 /**
  * Generate data for the test cases.
@@ -18,6 +18,15 @@ function generate_data(num_events: number, csparqlWindow: CSPARQLWindow) {
         );
         csparqlWindow.add(stream_element, i);
     }
+}
+
+function createWindowQuad(subjectSuffix: string) {
+    return quad(
+        namedNode('https://rsp.js/test_subject_' + subjectSuffix),
+        namedNode('http://rsp.js/test_property'),
+        namedNode('http://rsp.js/test_object'),
+        defaultGraph(),
+    );
 }
 
 describe('CSPARQLWindow', () => {
@@ -175,6 +184,121 @@ describe('CSPARQLWindow', () => {
         expect(csparqlWindow.getContent(9)).toBe(firstContainer);
         expect(csparqlWindow.getContent(10)).toBe(secondContainer);
         expect(csparqlWindow.getContent(10)).not.toBe(firstContainer);
+    });
+
+    test('centered windows keep half-open bounds at the start and end boundaries', () => {
+        const anchor = 1756122905256;
+        const range = 120000;
+        const window = new CSPARQLWindow(":window1", range, 60000, ReportStrategy.OnWindowClose, Tick.TimeDriven, anchor, 0, WindowSemantics.Centered);
+        const windowInstance = new WindowInstance(anchor, anchor + range);
+        const boundaryQuad = createWindowQuad('boundary');
+        const interiorQuad = createWindowQuad('interior');
+        const container = new QuadContainer(new Set<Quad>([boundaryQuad, interiorQuad]), anchor);
+        window.active_windows.set(windowInstance, container);
+
+        expect(window.getContent(anchor)).toBe(container);
+        expect(window.getContent(anchor + range - 1)).toBe(container);
+        expect(window.getContent(anchor + range)).toBeUndefined();
+    });
+
+    test('trailing windows stay unchanged while centered windows shift logical trigger time', () => {
+        const anchor = 1756122905256;
+        const range = 120000;
+        const step = 60000;
+        const windows = [
+            { open: anchor, close: anchor + range, label: 'one' },
+            { open: anchor + step, close: anchor + range + step, label: 'two' },
+            { open: anchor + 2 * step, close: anchor + range + 2 * step, label: 'three' },
+        ];
+
+        const trailing = new CSPARQLWindow(":window1", range, step, ReportStrategy.OnWindowClose, Tick.TimeDriven, anchor, 0, WindowSemantics.Trailing);
+        const centered = new CSPARQLWindow(":window1", range, step, ReportStrategy.OnWindowClose, Tick.TimeDriven, anchor, 0, WindowSemantics.Centered);
+        const trailingResults = new Array<QuadContainer>();
+        const centeredResults = new Array<QuadContainer>();
+
+        trailing.subscribe('RStream', (data: QuadContainer) => trailingResults.push(data));
+        centered.subscribe('RStream', (data: QuadContainer) => centeredResults.push(data));
+
+        windows.forEach(({ open, close, label }) => {
+            const trailingWindow = new WindowInstance(open, close);
+            const centeredWindow = new WindowInstance(open, close);
+            trailing.active_windows.set(trailingWindow, new QuadContainer(new Set<Quad>([createWindowQuad(`trailing-${label}`)]), open));
+            centered.active_windows.set(centeredWindow, new QuadContainer(new Set<Quad>([createWindowQuad(`centered-${label}`)]), open));
+        });
+
+        trailing.update_watermark(anchor + range - 1);
+        centered.update_watermark(anchor + range - 1);
+        expect(trailingResults).toHaveLength(0);
+        expect(centeredResults).toHaveLength(0);
+
+        trailing.update_watermark(anchor + range);
+        centered.update_watermark(anchor + range);
+        trailing.update_watermark(anchor + range + step);
+        centered.update_watermark(anchor + range + step);
+        trailing.update_watermark(anchor + range + 2 * step);
+        centered.update_watermark(anchor + range + 2 * step);
+
+        expect(trailingResults).toHaveLength(3);
+        expect(centeredResults).toHaveLength(3);
+
+        expect(trailingResults.map((result) => result.logical_trigger_time)).toStrictEqual([
+            anchor + range,
+            anchor + range + step,
+            anchor + range + 2 * step,
+        ]);
+        expect(centeredResults.map((result) => result.logical_trigger_time)).toStrictEqual([
+            anchor + step,
+            anchor + 2 * step,
+            anchor + 3 * step,
+        ]);
+
+        expect(trailingResults.map((result) => result.window_start)).toStrictEqual([
+            anchor,
+            anchor + step,
+            anchor + 2 * step,
+        ]);
+        expect(trailingResults.map((result) => result.window_end)).toStrictEqual([
+            anchor + range,
+            anchor + range + step,
+            anchor + range + 2 * step,
+        ]);
+        expect(trailingResults.map((result) => result.window_data_close_time)).toStrictEqual([
+            anchor + range,
+            anchor + range + step,
+            anchor + range + 2 * step,
+        ]);
+        expect(trailingResults.map((result) => result.result_emitted_at)).toStrictEqual([
+            anchor + range,
+            anchor + range + step,
+            anchor + range + 2 * step,
+        ]);
+        expect(trailingResults.map((result) => result.window_number)).toStrictEqual([1, 2, 3]);
+        expect(trailingResults.map((result) => result.window_semantics)).toStrictEqual([
+            WindowSemantics.Trailing,
+            WindowSemantics.Trailing,
+            WindowSemantics.Trailing,
+        ]);
+
+        expect(centeredResults.map((result) => result.window_semantics)).toStrictEqual([
+            WindowSemantics.Centered,
+            WindowSemantics.Centered,
+            WindowSemantics.Centered,
+        ]);
+        expect(centeredResults.map((result) => result.window_start)).toStrictEqual([
+            anchor,
+            anchor + step,
+            anchor + 2 * step,
+        ]);
+        expect(centeredResults.map((result) => result.window_end)).toStrictEqual([
+            anchor + range,
+            anchor + range + step,
+            anchor + range + 2 * step,
+        ]);
+        expect(centeredResults.map((result) => result.result_emitted_at)).toStrictEqual([
+            anchor + range,
+            anchor + range + step,
+            anchor + range + 2 * step,
+        ]);
     });
 });
 
