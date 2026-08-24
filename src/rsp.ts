@@ -1,4 +1,4 @@
-import { CSPARQLWindow, QuadContainer, ReportStrategy, Tick } from "./operators/s2r";
+import { CSPARQLWindow, OutOfOrderObservation, QuadContainer, ReportStrategy, Tick } from "./operators/s2r";
 import { R2ROperator } from "./operators/r2r";
 import { EventEmitter } from "events";
 import * as LOG_CONFIG from "./config/log_config.json";
@@ -19,6 +19,44 @@ export type binding_with_timestamp = {
     timestamp_to: number
 }
 
+/** Identifies a raw evaluation observation without coupling RSP-JS to an evaluator. */
+export type RSPMetricsContext = {
+    run_id: string,
+    approach: string,
+    client_id: string,
+    query_id: string,
+}
+
+export type RSPInsertionMetric = RSPMetricsContext & {
+    event_id: string,
+    stream_id: string,
+    start_monotonic_ns: string,
+    end_monotonic_ns: string,
+    duration_ms: number,
+    event_time_ms: number,
+}
+
+export type WindowQueryProcessingMetric = RSPMetricsContext & {
+    window_id: string,
+    window_from_ms: number,
+    window_to_ms: number,
+    window_size: number,
+    start_monotonic_ns: string,
+    end_monotonic_ns: string,
+    duration_ms: number,
+}
+
+export type OutOfOrderMetric = RSPMetricsContext & OutOfOrderObservation & {
+    event_id: string,
+    stream_id: string,
+}
+
+export type RSPEngineOptions = {
+    max_delay?: number,
+    metrics?: Partial<RSPMetricsContext>,
+    onMetric?: (event: 'rsp_insertion' | 'window_query_processing' | 'out_of_order_event', metric: RSPInsertionMetric | WindowQueryProcessingMetric | OutOfOrderMetric) => void,
+}
+
 /**
  * RDF Stream Class to represent the stream of RDF Data.   
  * It emits the data to the CSPARQL Window for processing.
@@ -26,21 +64,27 @@ export type binding_with_timestamp = {
 export class RDFStream {
     name: string;
     emitter: EventEmitter;
+    private next_event_sequence: number = 0;
 
     /**
      * Constructor for the RDFStream class.
      * @param {string} name - The name of the stream to be created.
      * @param {CSPARQLWindow} window - The CSPARQL Window to which the stream is to be processed and emitted by the S2R Operator.
      */
-    constructor(name: string, window: CSPARQLWindow) {
+    constructor(name: string, window: CSPARQLWindow, private readonly onInsertion: (event_id: string, event_time_ms: number, start_monotonic_ns: bigint, end_monotonic_ns: bigint, observation: OutOfOrderObservation) => void = () => undefined) {
         this.name = name;
         const EventEmitter = require('events').EventEmitter;
         this.emitter = new EventEmitter();
-        this.emitter.on('data', (quadcontainer: QuadContainer) => {
+        this.emitter.on('data', (quadcontainer: QuadContainer, event_id: string) => {
             // @ts-ignore
             quadcontainer.elements._graph = namedNode(window.name);
             // @ts-ignore
-            window.add(quadcontainer.elements, quadcontainer.last_time_changed());
+            const start_monotonic_ns = process.hrtime.bigint();
+            // A logical RDF stream event is represented by its quad set; the
+            // established window API types this argument as a Quad.
+            const observation = window.add(quadcontainer.elements as unknown as Quad, quadcontainer.last_time_changed());
+            const end_monotonic_ns = process.hrtime.bigint();
+            this.onInsertion(event_id, quadcontainer.last_time_changed(), start_monotonic_ns, end_monotonic_ns, observation);
         });
     }
 
@@ -49,8 +93,8 @@ export class RDFStream {
      * @param {Set<Quad>} event - The event to be added to the stream. The event is a set of quads of the form {subject, predicate, object, graph}.
      * @param {number} ts - The timestamp of the event.
      */
-    add(event: Set<Quad>, ts: number) {
-        this.emitter.emit('data', new QuadContainer(event, ts));
+    add(event: Set<Quad>, ts: number, event_id?: string) {
+        this.emitter.emit('data', new QuadContainer(event, ts), event_id ?? `${this.name}:${this.next_event_sequence++}`);
     }
 }
 
@@ -65,6 +109,10 @@ export class RSPEngine {
     public log_enabled!: boolean;
     private r2r: R2ROperator;
     public logger: Logger;
+    /** Additive raw-observation interface for evaluation consumers. */
+    public readonly metrics: EventEmitter;
+    private readonly metricsContext: RSPMetricsContext;
+    private readonly onMetric?: RSPEngineOptions['onMetric'];
 
     /**
      * Constructor for the RSPEngine class.
@@ -73,9 +121,7 @@ export class RSPEngine {
      * @param {number} opts.max_delay - The maximum delay for the window to be processed in the case of late data arrival and out of order data.
      * This field is optional and defaults to 0 for no delay expected by the RSP Engine in processing of the data.
      */
-    constructor(query: string, opts?: {
-        max_delay?: number
-    }) {
+    constructor(query: string, opts?: RSPEngineOptions) {
         this.windows = new Array<CSPARQLWindow>();
         if (opts) {
             this.max_delay = opts.max_delay ? opts.max_delay : 0;
@@ -85,13 +131,38 @@ export class RSPEngine {
         }
         const logLevel: LogLevel = LogLevel[LOG_CONFIG.log_level as keyof typeof LogLevel];
         this.logger = new Logger(logLevel, LOG_CONFIG.classes_to_log, LOG_CONFIG.destination as unknown as LogDestination);      
+        this.metrics = new EventEmitter();
+        this.metricsContext = {
+            run_id: opts?.metrics?.run_id ?? 'unspecified',
+            approach: opts?.metrics?.approach ?? 'unspecified',
+            client_id: opts?.metrics?.client_id ?? 'unspecified',
+            query_id: opts?.metrics?.query_id ?? 'unspecified',
+        };
+        this.onMetric = opts?.onMetric;
         this.streams = new Map<string, RDFStream>();
         const parser = new RSPQLParser();
         const parsed_query = parser.parse(query);
         parsed_query.s2r.forEach((window: WindowDefinition) => {
             const windowImpl = new CSPARQLWindow(window.window_name, window.width, window.slide, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, this.max_delay);
             this.windows.push(windowImpl);
-            const stream = new RDFStream(window.stream_name, windowImpl);
+            const stream = new RDFStream(window.stream_name, windowImpl, (event_id, event_time_ms, start_monotonic_ns, end_monotonic_ns, observation) => {
+                const duration_ms = Number(end_monotonic_ns - start_monotonic_ns) / 1_000_000;
+                this.emitMetric('rsp_insertion', {
+                    ...this.metricsContext,
+                    event_id,
+                    stream_id: window.stream_name,
+                    start_monotonic_ns: start_monotonic_ns.toString(),
+                    end_monotonic_ns: end_monotonic_ns.toString(),
+                    duration_ms,
+                    event_time_ms,
+                });
+                this.emitMetric('out_of_order_event', {
+                    ...this.metricsContext,
+                    event_id,
+                    stream_id: window.stream_name,
+                    ...observation,
+                });
+            });
             this.streams.set(window.stream_name, stream);
         })
         this.r2r = new R2ROperator(parsed_query.sparql);
@@ -124,9 +195,8 @@ export class RSPEngine {
                             }
                         }
                         this.logger.info(`Starting Window Query Processing for the window ${window.getCSPARQLWindowDefinition()} with window size ${data.len()}`, `RSPEngine`);
-                        let time_start_query_processing = new Date().getTime();
+                        const time_start_query_processing = process.hrtime.bigint();
                         const bindingsStream = await this.r2r.execute(data);
-                        let time_end_query_processing = new Date().getTime();
                         this.logger.info(`Ended the execution of the R2R Operator for the window ${window.getCSPARQLWindowDefinition()} with window size ${data.len()}`, `RSPEngine`);
                         // this.logger.info(`Time taken for query processing for window ${window.getCSPARQLWindowDefinition()} is ${time_end_query_processing - time_start_query_processing} ms with window size ${data.len()}`, `RSPEngine`);
                         bindingsStream.on('data', (binding: any) => {
@@ -139,7 +209,19 @@ export class RSPEngine {
                             emitter.emit("RStream", object_with_timestamp);
                         });
                         bindingsStream.on('end', () => {
-                         //   this.logger.info(`Ended Comunica Binding Stream for window ${window.getCSPARQLWindowDefinition()} with window size ${data.len()}`, `RSPEngine`);
+                            const end_monotonic_ns = process.hrtime.bigint();
+                            const window_from_ms = data.window_instance?.open ?? window.t0;
+                            const window_to_ms = data.window_instance?.close ?? window.t0 + window.slide;
+                            this.emitMetric('window_query_processing', {
+                                ...this.metricsContext,
+                                window_id: `${window.name}:[${window_from_ms},${window_to_ms})`,
+                                window_from_ms,
+                                window_to_ms,
+                                window_size: data.len(),
+                                start_monotonic_ns: time_start_query_processing.toString(),
+                                end_monotonic_ns: end_monotonic_ns.toString(),
+                                duration_ms: Number(end_monotonic_ns - time_start_query_processing) / 1_000_000,
+                            });
                         });
                         await bindingsStream;
                     }
@@ -176,6 +258,11 @@ export class RSPEngine {
             streams.push(stream.name);
         });
         return streams;
+    }
+
+    private emitMetric(event: 'rsp_insertion' | 'window_query_processing' | 'out_of_order_event', metric: RSPInsertionMetric | WindowQueryProcessingMetric | OutOfOrderMetric): void {
+        this.metrics.emit(event, metric);
+        this.onMetric?.(event, metric);
     }
 
 

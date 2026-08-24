@@ -178,6 +178,65 @@ describe('CSPARQLWindow', () => {
     });
 });
 
+describe('CSPARQLWindow out-of-order classification', () => {
+    const makeQuad = (id: string) => quad(
+        namedNode(`https://rsp.js/ooo/${id}`),
+        namedNode('https://rsp.js/p'),
+        namedNode('https://rsp.js/o'),
+        defaultGraph(),
+    );
+
+    test('classifies an in-order event with zero lateness', () => {
+        const window = new CSPARQLWindow(':w', 1000, 1000, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 10);
+        const observation = window.add(makeQuad('in-order'), 100);
+
+        expect(observation).toMatchObject({
+            event_time_ms: 100,
+            reference_time_ms: 0,
+            out_of_order: false,
+            lateness_ms: 0,
+            max_out_of_orderness_ms: 10,
+            within_bound: true,
+        });
+    });
+
+    test('accepts a late event within max_delay exactly once', () => {
+        const window = new CSPARQLWindow(':w', 1000, 1000, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 10);
+        const content = new QuadContainer(new Set<Quad>(), 0);
+        window.active_windows.set(new WindowInstance(0, 1000), content);
+        window.time = 100;
+
+        const observation = window.add(makeQuad('within'), 95);
+
+        expect(observation).toMatchObject({ out_of_order: true, lateness_ms: 5, within_bound: true });
+        expect(content.len()).toBe(1);
+    });
+
+    test('accepts a late event exactly at max_delay', () => {
+        const window = new CSPARQLWindow(':w', 1000, 1000, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 10);
+        const content = new QuadContainer(new Set<Quad>(), 0);
+        window.active_windows.set(new WindowInstance(0, 1000), content);
+        window.time = 100;
+
+        const observation = window.add(makeQuad('boundary'), 90);
+
+        expect(observation).toMatchObject({ out_of_order: true, lateness_ms: 10, within_bound: true });
+        expect(content.len()).toBe(1);
+    });
+
+    test('rejects a late event beyond max_delay', () => {
+        const window = new CSPARQLWindow(':w', 1000, 1000, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 10);
+        const content = new QuadContainer(new Set<Quad>(), 0);
+        window.active_windows.set(new WindowInstance(0, 1000), content);
+        window.time = 100;
+
+        const observation = window.add(makeQuad('outside'), 89);
+
+        expect(observation).toMatchObject({ out_of_order: true, lateness_ms: 11, within_bound: false });
+        expect(content.len()).toBe(0);
+    });
+});
+
 describe('CSPARQLWindow OOO', () => {
     let window: CSPARQLWindow;
     const width = 10;

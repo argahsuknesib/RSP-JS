@@ -18,6 +18,19 @@ export enum Tick {
     BatchDriven,
 }
 /* eslint-enable no-unused-vars */
+
+/**
+ * One logical RDF stream event classified against the event-time reference
+ * immediately before it is inserted into a window.
+ */
+export type OutOfOrderObservation = {
+    event_time_ms: number,
+    reference_time_ms: number,
+    out_of_order: boolean,
+    lateness_ms: number,
+    max_out_of_orderness_ms: number,
+    within_bound: boolean
+}
 /**
  * WindowInstance class to represent the window instance of the CSPARQL Window.
  */
@@ -72,6 +85,8 @@ export class WindowInstance {
 export class QuadContainer {
     elements: Set<Quad>;
     last_time_stamp_changed: number;
+    /** Window that emitted this container; set only for RStream emission. */
+    window_instance?: WindowInstance;
     /** 
      * Constructor for the QuadContainer class.
      * @param {Set<Quad>} elements - The set of quads in the container.
@@ -186,19 +201,31 @@ export class CSPARQLWindow {
      * @returns {void} - The function does not return anything.
      */
 
-    add(event: Quad, timestamp: number): void {
+    add(event: Quad, timestamp: number): OutOfOrderObservation {
         this.logger.info(`adding_event_to_the_window`, `CSPARQLWindow`);
         console.debug(`Adding [" + ${event} + "] at time : ${timestamp} and watermark ${this.current_watermark}`);
         let t_e = timestamp;
         let to_evict = new Set<WindowInstance>();
+        const reference_time_ms = this.time;
+        const out_of_order = timestamp < reference_time_ms;
+        const lateness_ms = out_of_order ? reference_time_ms - timestamp : 0;
+        const within_bound = !out_of_order || lateness_ms <= this.max_delay;
+        const observation: OutOfOrderObservation = {
+            event_time_ms: timestamp,
+            reference_time_ms,
+            out_of_order,
+            lateness_ms,
+            max_out_of_orderness_ms: this.max_delay,
+            within_bound,
+        };
         if (this.time > timestamp) {
             this.logger.info(`out_of_order_event_received`, `CSPARQLWindow`);
             let event_latency = this.time - timestamp;
             this.logger.info(`Event Latency : ${event_latency}`, `CSPARQLWindow`);
-            if (t_e - this.time > this.max_delay) {
+            if (event_latency > this.max_delay) {
                 this.logger.info(`out_of_order_event_out_of_delay`, `CSPARQLWindow`);
             }
-            else if (t_e - this.time <= this.max_delay) {
+            else {
                 this.logger.info(`out_of_order_event_within_delay`, `CSPARQLWindow`);
                 for (let w of this.active_windows.keys()) {
                     if (w.open <= t_e && t_e < w.close) {
@@ -234,6 +261,7 @@ export class CSPARQLWindow {
             this.trigger_window_content(this.current_watermark, timestamp);
             this.update_watermark(t_e);
         }
+        return observation;
     }
 
     if_event_late(timestamp: number) {
@@ -258,6 +286,7 @@ export class CSPARQLWindow {
         for (const window of windowsToEvict) {
             const content = this.active_windows.get(window);
             if (content && content.len() > 0) {
+                content.window_instance = window;
                 this.emitter.emit('RStream', content);
                 this.logger.info(`Window with bounds [${window.open},${window.close}) ${window.getDefinition()} is triggered for the window name ${this.name}`, `CSPARQLWindow`);
                 window.set_triggered();
