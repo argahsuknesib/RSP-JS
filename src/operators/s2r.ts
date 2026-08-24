@@ -201,9 +201,10 @@ export class CSPARQLWindow {
      * @returns {void} - The function does not return anything.
      */
 
-    add(event: Quad, timestamp: number): OutOfOrderObservation {
+    add(event: Quad | Set<Quad>, timestamp: number): OutOfOrderObservation {
         this.logger.info(`adding_event_to_the_window`, `CSPARQLWindow`);
         console.debug(`Adding [" + ${event} + "] at time : ${timestamp} and watermark ${this.current_watermark}`);
+        const quads = event instanceof Set ? event : new Set<Quad>([event]);
         let t_e = timestamp;
         let to_evict = new Set<WindowInstance>();
         const reference_time_ms = this.time;
@@ -231,7 +232,7 @@ export class CSPARQLWindow {
                     if (w.open <= t_e && t_e < w.close) {
                         let temp_window = this.active_windows.get(w);
                         if (temp_window) {
-                            temp_window.add(event, t_e);
+                            quads.forEach((quad) => temp_window!.add(quad, t_e));
                             if (!w.has_triggered) {
                                 this.pending_triggers.add(w);
                             }
@@ -250,7 +251,7 @@ export class CSPARQLWindow {
                 if (w.open <= t_e && t_e < w.close) {
                     let window_to_add = this.active_windows.get(w);
                     if (window_to_add) {
-                        window_to_add.add(event, t_e);
+                        quads.forEach((quad) => window_to_add!.add(quad, t_e));
                         if (!w.has_triggered) {
                             this.pending_triggers.add(w);
                         }

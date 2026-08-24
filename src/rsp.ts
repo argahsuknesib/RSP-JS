@@ -76,13 +76,28 @@ export class RDFStream {
         const EventEmitter = require('events').EventEmitter;
         this.emitter = new EventEmitter();
         this.emitter.on('data', (quadcontainer: QuadContainer, event_id: string) => {
-            // @ts-ignore
-            quadcontainer.elements._graph = namedNode(window.name);
+            const windowGraph = namedNode(window.name);
+            // RDFStream historically receives both logical Set<Quad> events and
+            // individual Quad events at runtime. Preserve that shape while
+            // assigning the graph term on each actual RDFJS quad.
+            const event = quadcontainer.elements instanceof Set
+                ? new Set(Array.from(quadcontainer.elements, (q: Quad) => DataFactory.quad(
+                    q.subject,
+                    q.predicate,
+                    q.object,
+                    windowGraph,
+                )))
+                : DataFactory.quad(
+                    (quadcontainer.elements as unknown as Quad).subject,
+                    (quadcontainer.elements as unknown as Quad).predicate,
+                    (quadcontainer.elements as unknown as Quad).object,
+                    windowGraph,
+                );
             // @ts-ignore
             const start_monotonic_ns = process.hrtime.bigint();
-            // A logical RDF stream event is represented by its quad set; the
-            // established window API types this argument as a Quad.
-            const observation = window.add(quadcontainer.elements as unknown as Quad, quadcontainer.last_time_changed());
+            // Preserve one window insertion/OOO observation for the logical
+            // event, whether the runtime event is a Quad or a Set<Quad>.
+            const observation = window.add(event as Quad | Set<Quad>, quadcontainer.last_time_changed());
             const end_monotonic_ns = process.hrtime.bigint();
             this.onInsertion(event_id, quadcontainer.last_time_changed(), start_monotonic_ns, end_monotonic_ns, observation);
         });
