@@ -33,6 +33,7 @@ const engine = new RSPEngine(query, {
 engine.metrics.on('rsp_insertion', observation => writeRaw(observation));
 engine.metrics.on('out_of_order_event', observation => writeRaw(observation));
 engine.metrics.on('window_query_processing', observation => writeRaw(observation));
+engine.metrics.on('r2r_first_result', observation => writeRaw(observation));
 
 engine.getStream(streamId)?.add(quads, eventTimeMs, eventId);
 ```
@@ -80,3 +81,18 @@ start_monotonic_ns, end_monotonic_ns, duration_ms
 `window_id` is `<window name>:[<from>,<to>)`. The start is immediately before `R2ROperator.execute(data)`. The end is the Comunica bindings stream's `end` event, after binding consumption has completed. This deliberately includes query setup and asynchronous R2R result production, but excludes prior RDF event insertion and any caller-side network/parsing/timestamp work.
 
 No summary statistics, synthetic observations, or benchmark tables are produced in this repository.
+
+### `r2r_first_result`
+
+```text
+run_id, approach, client_id, query_id,
+window_id, window_from_ms, window_to_ms, window_size,
+start_monotonic_ns, end_monotonic_ns, duration_ms
+```
+
+Exactly one observation is emitted on the first `data` event from each nonempty
+R2R bindings stream. The start is the same point used by
+`window_query_processing`; the end is captured inside that first `data`
+callback using `process.hrtime.bigint()`. Zero-binding evaluations do not emit
+this observation. The existing `window_query_processing` observation remains
+completion-based and unchanged.

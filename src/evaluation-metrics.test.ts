@@ -1,5 +1,5 @@
 import { DataFactory } from 'n3';
-import { OutOfOrderMetric, RSPInsertionMetric, RSPEngine, WindowQueryProcessingMetric } from './rsp';
+import { OutOfOrderMetric, R2RFirstResultMetric, RSPInsertionMetric, RSPEngine, WindowQueryProcessingMetric } from './rsp';
 
 const { namedNode, defaultGraph, quad } = DataFactory;
 
@@ -72,4 +72,63 @@ test('emits window query timing only after the binding stream completes', async 
     });
     expect(BigInt(metrics[0].end_monotonic_ns) >= BigInt(metrics[0].start_monotonic_ns)).toBe(true);
     expect(metrics[0].duration_ms).toBeGreaterThanOrEqual(0);
+});
+
+test('emits first R2R result timing once for a multi-binding window evaluation', async () => {
+    const engine = new RSPEngine(query, {
+        metrics: { run_id: 'run-first', approach: 'rsp', client_id: 'client-first', query_id: 'query-first' },
+    });
+    const firstResults: R2RFirstResultMetric[] = [];
+    const outputBindings: any[] = [];
+    const completion = new Promise<void>((resolve) => {
+        engine.metrics.on('r2r_first_result', metric => firstResults.push(metric));
+        engine.metrics.on('window_query_processing', () => resolve());
+    });
+    const output = engine.register();
+    output.on('RStream', (binding: any) => outputBindings.push(binding));
+    const stream = engine.getStream('https://rsp.js/stream1');
+    stream?.add(new Set([...event('one'), ...event('two')]), 1, 'event-1');
+    stream?.add(event('trigger'), 11, 'event-11');
+
+    await completion;
+
+    expect(outputBindings).toHaveLength(2);
+    expect(firstResults).toHaveLength(1);
+    expect(firstResults[0]).toMatchObject({
+        run_id: 'run-first',
+        approach: 'rsp',
+        client_id: 'client-first',
+        query_id: 'query-first',
+        window_from_ms: 1,
+        window_to_ms: 11,
+        window_size: 2,
+    });
+    expect(BigInt(firstResults[0].end_monotonic_ns) >= BigInt(firstResults[0].start_monotonic_ns)).toBe(true);
+    expect(firstResults[0].duration_ms).toBeGreaterThanOrEqual(0);
+});
+
+test('does not emit first R2R result timing for a zero-result window evaluation', async () => {
+    const noMatchQuery = `PREFIX : <https://rsp.js/>
+        REGISTER RStream <output> AS
+        SELECT *
+        FROM NAMED WINDOW :w1 ON STREAM :stream1 [RANGE 10 STEP 10]
+        WHERE {
+            WINDOW :w1 { ?s :doesNotMatch ?o }
+        }`;
+    const engine = new RSPEngine(noMatchQuery, {
+        metrics: { run_id: 'run-zero', approach: 'rsp', client_id: 'client-zero', query_id: 'query-zero' },
+    });
+    const firstResults: R2RFirstResultMetric[] = [];
+    const completion = new Promise<void>((resolve) => {
+        engine.metrics.on('r2r_first_result', metric => firstResults.push(metric));
+        engine.metrics.on('window_query_processing', () => resolve());
+    });
+    const stream = engine.getStream('https://rsp.js/stream1');
+    engine.register();
+    stream?.add(event('first'), 1, 'event-1');
+    stream?.add(event('second'), 11, 'event-11');
+
+    await completion;
+
+    expect(firstResults).toHaveLength(0);
 });

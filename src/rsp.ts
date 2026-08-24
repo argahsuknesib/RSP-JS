@@ -46,6 +46,8 @@ export type WindowQueryProcessingMetric = RSPMetricsContext & {
     duration_ms: number,
 }
 
+export type R2RFirstResultMetric = WindowQueryProcessingMetric;
+
 export type OutOfOrderMetric = RSPMetricsContext & OutOfOrderObservation & {
     event_id: string,
     stream_id: string,
@@ -54,7 +56,7 @@ export type OutOfOrderMetric = RSPMetricsContext & OutOfOrderObservation & {
 export type RSPEngineOptions = {
     max_delay?: number,
     metrics?: Partial<RSPMetricsContext>,
-    onMetric?: (event: 'rsp_insertion' | 'window_query_processing' | 'out_of_order_event', metric: RSPInsertionMetric | WindowQueryProcessingMetric | OutOfOrderMetric) => void,
+    onMetric?: (event: 'rsp_insertion' | 'window_query_processing' | 'r2r_first_result' | 'out_of_order_event', metric: RSPInsertionMetric | WindowQueryProcessingMetric | R2RFirstResultMetric | OutOfOrderMetric) => void,
 }
 
 /**
@@ -214,7 +216,24 @@ export class RSPEngine {
                         const bindingsStream = await this.r2r.execute(data);
                         this.logger.info(`Ended the execution of the R2R Operator for the window ${window.getCSPARQLWindowDefinition()} with window size ${data.len()}`, `RSPEngine`);
                         // this.logger.info(`Time taken for query processing for window ${window.getCSPARQLWindowDefinition()} is ${time_end_query_processing - time_start_query_processing} ms with window size ${data.len()}`, `RSPEngine`);
+                        let firstResultRecorded = false;
                         bindingsStream.on('data', (binding: any) => {
+                            if (!firstResultRecorded) {
+                                firstResultRecorded = true;
+                                const end_monotonic_ns = process.hrtime.bigint();
+                                const window_from_ms = data.window_instance?.open ?? window.t0;
+                                const window_to_ms = data.window_instance?.close ?? window.t0 + window.slide;
+                                this.emitMetric('r2r_first_result', {
+                                    ...this.metricsContext,
+                                    window_id: `${window.name}:[${window_from_ms},${window_to_ms})`,
+                                    window_from_ms,
+                                    window_to_ms,
+                                    window_size: data.len(),
+                                    start_monotonic_ns: time_start_query_processing.toString(),
+                                    end_monotonic_ns: end_monotonic_ns.toString(),
+                                    duration_ms: Number(end_monotonic_ns - time_start_query_processing) / 1_000_000,
+                                });
+                            }
                             const object_with_timestamp: binding_with_timestamp = {
                                 bindings: binding,
                                 timestamp_from: window.t0,
@@ -275,7 +294,7 @@ export class RSPEngine {
         return streams;
     }
 
-    private emitMetric(event: 'rsp_insertion' | 'window_query_processing' | 'out_of_order_event', metric: RSPInsertionMetric | WindowQueryProcessingMetric | OutOfOrderMetric): void {
+    private emitMetric(event: 'rsp_insertion' | 'window_query_processing' | 'r2r_first_result' | 'out_of_order_event', metric: RSPInsertionMetric | WindowQueryProcessingMetric | R2RFirstResultMetric | OutOfOrderMetric): void {
         this.metrics.emit(event, metric);
         this.onMetric?.(event, metric);
     }
