@@ -132,3 +132,23 @@ test('does not emit first R2R result timing for a zero-result window evaluation'
 
     expect(firstResults).toHaveLength(0);
 });
+
+test('emits structured metrics when diagnostic logging is disabled', async () => {
+    const previous = process.env.RSP_JS_DISABLE_LOGGING;
+    process.env.RSP_JS_DISABLE_LOGGING = '1';
+    try {
+        const engine = new RSPEngine(query, { metrics: { run_id: 'run-disabled', approach: 'rsp', client_id: 'client-disabled', query_id: 'query-disabled' } });
+        const seen = new Set<string>();
+        const completion = new Promise<void>((resolve) => engine.metrics.on('window_query_processing', () => resolve()));
+        for (const name of ['rsp_insertion', 'out_of_order_event', 'window_query_processing', 'r2r_first_result']) engine.metrics.on(name, () => seen.add(name));
+        const stream = engine.getStream('https://rsp.js/stream1');
+        engine.register();
+        stream?.add(event('disabled-first'), 1, 'disabled-first');
+        stream?.add(event('disabled-trigger'), 11, 'disabled-trigger');
+        await completion;
+        expect(seen).toEqual(new Set(['rsp_insertion', 'out_of_order_event', 'window_query_processing', 'r2r_first_result']));
+    } finally {
+        if (previous === undefined) delete process.env.RSP_JS_DISABLE_LOGGING;
+        else process.env.RSP_JS_DISABLE_LOGGING = previous;
+    }
+});

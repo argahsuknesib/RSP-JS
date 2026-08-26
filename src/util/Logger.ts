@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import { LogLevel, LogDestination } from './LoggerEnum';
 
 export class Logger {
+    private readonly disabled = process.env.RSP_JS_DISABLE_LOGGING === '1';
     private log_level: LogLevel;
     private loggable_classes: string[];
     private log_destination: any;
@@ -10,7 +11,7 @@ export class Logger {
         this.log_level = logLevel;
         this.loggable_classes = loggableClasses;
         this.log_destination = logDestination;
-        console.log(`Logger initialized with log level ${this.log_level}, loggable classes ${this.loggable_classes}, and log destination ${this.log_destination}`);
+        if (!this.disabled) console.log(`Logger initialized with log level ${this.log_level}, loggable classes ${this.loggable_classes}, and log destination ${this.log_destination}`);
 
     }
 
@@ -27,6 +28,7 @@ export class Logger {
     }
 
     log(level: LogLevel, message: string, className: string) {
+        if (this.disabled) return;
         if (level >= this.log_level && this.loggable_classes.includes(className)) {
             const logPrefix = `[${LogLevel[level]}] [${className}]`;
             const logMessage = `${Date.now()},${message}`;
