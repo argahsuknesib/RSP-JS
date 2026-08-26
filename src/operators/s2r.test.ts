@@ -54,6 +54,50 @@ describe('CSPARQLWindow', () => {
         csparqlWindow.add(quad1, 0);
     });
 
+    test('suppresses direct window diagnostics when benchmark logging is disabled', () => {
+        const previous = process.env.RSP_JS_DISABLE_LOGGING;
+        process.env.RSP_JS_DISABLE_LOGGING = '1';
+        const consoleDebug = jest.spyOn(console, 'debug').mockImplementation(() => undefined);
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+        try {
+            const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000);
+            csparqlWindow.add(quad(
+                namedNode('https://rsp.js/test_subject_disabled'),
+                namedNode('http://rsp.js/test_property'),
+                namedNode('http://rsp.js/test_object'),
+                defaultGraph(),
+            ), 0);
+            csparqlWindow.update_watermark(0);
+            expect(consoleDebug).not.toHaveBeenCalled();
+            expect(consoleError).not.toHaveBeenCalled();
+        } finally {
+            consoleDebug.mockRestore();
+            consoleError.mockRestore();
+            if (previous === undefined) delete process.env.RSP_JS_DISABLE_LOGGING;
+            else process.env.RSP_JS_DISABLE_LOGGING = previous;
+        }
+    });
+
+    test('retains direct window diagnostics when benchmark logging is enabled', () => {
+        const previous = process.env.RSP_JS_DISABLE_LOGGING;
+        delete process.env.RSP_JS_DISABLE_LOGGING;
+        const consoleDebug = jest.spyOn(console, 'debug').mockImplementation(() => undefined);
+        try {
+            const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000);
+            csparqlWindow.add(quad(
+                namedNode('https://rsp.js/test_subject_enabled'),
+                namedNode('http://rsp.js/test_property'),
+                namedNode('http://rsp.js/test_object'),
+                defaultGraph(),
+            ), 0);
+            expect(consoleDebug).toHaveBeenCalledWith(expect.stringContaining('Adding [" +'));
+        } finally {
+            consoleDebug.mockRestore();
+            if (previous === undefined) delete process.env.RSP_JS_DISABLE_LOGGING;
+            else process.env.RSP_JS_DISABLE_LOGGING = previous;
+        }
+    });
+
     test('test_scope', () => {
         const csparqlWindow = new CSPARQLWindow(":window1", 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 60000);
         csparqlWindow.scope(4);

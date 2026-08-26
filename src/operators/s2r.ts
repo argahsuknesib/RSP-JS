@@ -5,6 +5,10 @@ import { Logger } from "../util/Logger";
 import { LogLevel, LogDestination } from "../util/LoggerEnum";
 import * as LOG_CONFIG from "../config/log_config.json";
 
+function diagnosticLoggingDisabled(): boolean {
+    return process.env.RSP_JS_DISABLE_LOGGING === "1";
+}
+
 /* eslint-disable no-unused-vars */
 export enum ReportStrategy {
     NonEmptyContent,
@@ -203,7 +207,7 @@ export class CSPARQLWindow {
 
     add(event: Quad | Set<Quad>, timestamp: number): OutOfOrderObservation {
         this.logger.info(`adding_event_to_the_window`, `CSPARQLWindow`);
-        console.debug(`Adding [" + ${event} + "] at time : ${timestamp} and watermark ${this.current_watermark}`);
+        if (!diagnosticLoggingDisabled()) console.debug(`Adding [" + ${event} + "] at time : ${timestamp} and watermark ${this.current_watermark}`);
         const quads = event instanceof Set ? event : new Set<Quad>([event]);
         let t_e = timestamp;
         let to_evict = new Set<WindowInstance>();
@@ -324,7 +328,7 @@ export class CSPARQLWindow {
             this.trigger_window_content(this.current_watermark, this.time);
         }
         else {
-            console.error("Watermark is not increasing");
+            if (!diagnosticLoggingDisabled()) console.error("Watermark is not increasing");
         }
     }
 
