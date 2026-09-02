@@ -5,7 +5,7 @@
   "types": "dist/index.d.ts",
   "main": "dist/index.js",
   "scripts": {
-    "build": "npx tsc && tsc -d --declarationDir dist/ --emitDeclarationOnly",
+    "build": "npx tsc && node scripts/copy-runtime-config.js && tsc -d --declarationDir dist/ --emitDeclarationOnly",
     "start": "node dist/index.js",
     "test": "jest --coverage",
     "test:watch": "jest --watch",
