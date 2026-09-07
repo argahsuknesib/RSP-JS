@@ -21,14 +21,14 @@ export enum LogDestination {
 export class Logger {
     private log_level: LogLevel;
     private loggable_classes: string[];
-    private log_destination: any;
+    private log_destination: string;
 
     constructor(logLevel: LogLevel, loggableClasses: string[], logDestination: any) {
         this.log_level = logLevel;
         this.loggable_classes = loggableClasses;
-        this.log_destination = logDestination;
-        console.log(`Logger initialized with log level ${this.log_level}, loggable classes ${this.loggable_classes}, and log destination ${this.log_destination}`);
-        
+        this.log_destination = typeof logDestination === 'string'
+            ? logDestination
+            : String(LogDestination[logDestination as LogDestination]);
     }
 
     setLogLevel(logLevel: LogLevel) {
@@ -40,30 +40,27 @@ export class Logger {
     }
 
     setLogDestination(logDestination: LogDestination) {
-        this.log_destination = logDestination;
+        this.log_destination = String(LogDestination[logDestination]);
     }
 
     log(level: LogLevel, message: string, className: string) {
-        console.log(`Logging level: ${level}`);
-        console.log(`this.log_level: ${this.log_level}`);
-        
-        if (level >= this.log_level && this.loggable_classes.includes(className)){
+        if (level >= this.log_level && this.loggable_classes.includes(className)) {
             const logPrefix = `[${LogLevel[level]}] [${className}]`;
             const logMessage = `${Date.now()} ${logPrefix} ${message}`;
-            console.log(`Logging destination: ${this.log_destination}`);
             switch (this.log_destination) {
                 case 'CONSOLE':
                     console.log(logMessage);
                     break;
                 case 'FILE':
                     try {
-                        fs.appendFileSync(`./logs/${className}.log`, `${logMessage}\n`);                        
+                        fs.mkdirSync('./logs', { recursive: true });
+                        fs.appendFileSync(`./logs/${className}.log`, `${logMessage}\n`);
                     } catch (error) {
                         console.error(`Error writing to file: ${error}`);
                     }
                     break;
                 default:
-                    console.log(`Invalid log destination: ${this.log_destination}`);
+                    throw new Error(`Invalid log destination: ${this.log_destination}`);
             }
         }
     }
@@ -116,4 +113,3 @@ export class Logger {
         return new Logger(LogLevel.INFO, [], LogDestination.CONSOLE);
     }
 }
-
