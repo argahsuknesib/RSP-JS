@@ -41,7 +41,6 @@ test('rsp_consumer_test', () => __awaiter(void 0, void 0, void 0, function* () {
     let results = new Array();
     // @ts-ignore
     emitter.on('RStream', (object) => {
-        console.log("received results");
         results.push(object.bindings.toString());
     });
     if (stream) {
@@ -51,7 +50,6 @@ test('rsp_consumer_test', () => __awaiter(void 0, void 0, void 0, function* () {
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     yield sleep(2000);
     expect(results.length).toBe(2 + 4 + 6 + 8);
-    console.log(results);
 }));
 test('rsp_multiple_same_window_test', () => __awaiter(void 0, void 0, void 0, function* () {
     let query = `PREFIX : <https://rsp.js/>
@@ -71,7 +69,6 @@ test('rsp_multiple_same_window_test', () => __awaiter(void 0, void 0, void 0, fu
     let results = new Array();
     // @ts-ignore
     emitter.on('RStream', (object) => {
-        console.log("received results");
         results.push(object.bindings.toString());
     });
     if (stream1 && stream2) {
@@ -81,7 +78,6 @@ test('rsp_multiple_same_window_test', () => __awaiter(void 0, void 0, void 0, fu
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     yield sleep(1000);
     expect(results.length).toBe(2 * (2 + 4 + 6 + 8));
-    console.log(results);
 }));
 test('rsp_multiple_difff_window_test', () => __awaiter(void 0, void 0, void 0, function* () {
     let query = `PREFIX : <https://rsp.js/>
@@ -101,7 +97,6 @@ test('rsp_multiple_difff_window_test', () => __awaiter(void 0, void 0, void 0, f
     let results = new Array();
     // @ts-ignore
     emitter.on('RStream', (object) => {
-        console.log("received results");
         results.push(object.bindings.toString());
     });
     if (stream1 && stream2) {
@@ -116,7 +111,6 @@ test('rsp_multiple_difff_window_test', () => __awaiter(void 0, void 0, void 0, f
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     yield sleep(2000);
     expect(results.length).toBe(2 + 4 + 6 + 8);
-    console.log(results);
 }));
 test('rsp_static_plus_window_test', () => __awaiter(void 0, void 0, void 0, function* () {
     let query = `PREFIX : <https://rsp.js/>
@@ -136,7 +130,6 @@ test('rsp_static_plus_window_test', () => __awaiter(void 0, void 0, void 0, func
     let results = new Array();
     // @ts-ignore
     emitter.on('RStream', (object) => {
-        console.log("received results");
         results.push(object.bindings.toString());
     });
     if (stream1) {
@@ -146,7 +139,6 @@ test('rsp_static_plus_window_test', () => __awaiter(void 0, void 0, void 0, func
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     yield sleep(1000);
     expect(results.length).toBe(2 + 4 + 6 + 8);
-    console.log(results);
 }));
 test('test_get_all_streams', () => {
     let query = `PREFIX : <https://rsp.js/>
