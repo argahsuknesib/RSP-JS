@@ -50,12 +50,16 @@ export class RSPEngine {
     public window_semantics: WindowSemantics;
     private r2r: R2ROperator;
     private logger: Logger;
-    private processing_queue: Promise<void>;
+    private next_processing_sequence: number;
+    private next_emission_sequence: number;
+    private completed_processing: Map<number, { results: binding_with_timestamp[], error?: unknown }>;
 
     constructor(query: string, options: RSPEngineOptions = {}) {
         this.windows = new Array<CSPARQLWindow>();
         this.streams = new Map<string, RDFStream>();
-        this.processing_queue = Promise.resolve();
+        this.next_processing_sequence = 0;
+        this.next_emission_sequence = 0;
+        this.completed_processing = new Map();
         this.max_delay = Math.max(0, options.max_delay ?? 0);
         this.window_semantics = this.resolveWindowSemantics(options.window_semantics);
 
@@ -89,26 +93,18 @@ export class RSPEngine {
         const emitter = new EventEmitter();
         this.windows.forEach((window) => {
             window.subscribe("RStream", (data: QuadContainer) => {
-                this.processing_queue = this.processing_queue
-                    .then(() => this.processWindow(window, data, emitter))
-                    .catch((error: unknown) => {
-                        try {
-                            this.reportProcessingError(emitter, error);
-                        } catch (reportingError) {
-                            this.logger.error(
-                                `RSP query processing failed: ${String(reportingError)}`,
-                                "RSPEngine",
-                            );
-                        }
-                    });
+                const sequence = this.next_processing_sequence++;
+                void this.processWindow(window, data)
+                    .then((results) => this.completeProcessing(emitter, sequence, results))
+                    .catch((error: unknown) => this.completeProcessing(emitter, sequence, [], error));
             });
         });
         return emitter;
     }
 
-    private async processWindow(window: CSPARQLWindow, data: QuadContainer, emitter: EventEmitter): Promise<void> {
+    private async processWindow(window: CSPARQLWindow, data: QuadContainer): Promise<binding_with_timestamp[]> {
         if (data.len() === 0) {
-            return;
+            return [];
         }
 
         // A result window may depend on more than one named stream. Prefer the
@@ -137,6 +133,7 @@ export class RSPEngine {
         const timestampTo = windowEnd ?? timestampFrom + window.width;
         const logicalTriggerTime = data.logical_trigger_time ?? timestampTo;
         const semantics = data.window_semantics ?? this.window_semantics;
+        const results: binding_with_timestamp[] = [];
 
         await new Promise<void>((resolve, reject) => {
             let settled = false;
@@ -153,22 +150,60 @@ export class RSPEngine {
             };
 
             bindingsStream.on("data", (binding: any) => {
-                try {
-                    const result: binding_with_timestamp = {
-                        bindings: binding,
-                        timestamp_from: timestampFrom,
-                        timestamp_to: timestampTo,
-                        logical_trigger_time: logicalTriggerTime,
-                        window_semantics: semantics,
-                    };
-                    emitter.emit("RStream", result);
-                } catch (error) {
-                    finish(error);
-                }
+                results.push({
+                    bindings: binding,
+                    timestamp_from: timestampFrom,
+                    timestamp_to: timestampTo,
+                    logical_trigger_time: logicalTriggerTime,
+                    window_semantics: semantics,
+                });
             });
             bindingsStream.on("end", () => finish());
             bindingsStream.on("error", (error: unknown) => finish(error));
         });
+        return results;
+    }
+
+    private completeProcessing(
+        emitter: EventEmitter,
+        sequence: number,
+        results: binding_with_timestamp[],
+        error?: unknown,
+    ): void {
+        this.completed_processing.set(sequence, { results, error });
+
+        while (this.completed_processing.has(this.next_emission_sequence)) {
+            const completed = this.completed_processing.get(this.next_emission_sequence);
+            this.completed_processing.delete(this.next_emission_sequence);
+            this.next_emission_sequence++;
+            if (completed === undefined) {
+                continue;
+            }
+
+            if (completed.error !== undefined) {
+                this.reportProcessingErrorSafely(emitter, completed.error);
+                continue;
+            }
+
+            for (const result of completed.results) {
+                try {
+                    emitter.emit("RStream", result);
+                } catch (emissionError) {
+                    this.reportProcessingErrorSafely(emitter, emissionError);
+                }
+            }
+        }
+    }
+
+    private reportProcessingErrorSafely(emitter: EventEmitter, error: unknown): void {
+        try {
+            this.reportProcessingError(emitter, error);
+        } catch (reportingError) {
+            this.logger.error(
+                `RSP query processing failed: ${String(reportingError)}`,
+                "RSPEngine",
+            );
+        }
     }
 
     private reportProcessingError(emitter: EventEmitter, error: unknown): void {
