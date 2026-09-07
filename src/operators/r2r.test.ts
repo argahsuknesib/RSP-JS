@@ -7,6 +7,15 @@ const { namedNode, literal, defaultGraph, quad } = DataFactory;
 import { Quad } from 'n3';
 import { R2ROperator } from "./r2r";
 
+function collectBindings(bindingsStream: any): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+        const results: any[] = [];
+        bindingsStream.on('data', (binding: any) => results.push(binding));
+        bindingsStream.on('end', () => resolve(results));
+        bindingsStream.on('error', reject);
+    });
+}
+
 test('test_query_engine', async () => {
     let r2r = new R2ROperator(`SELECT * WHERE { ?s ?p ?o }`);
     const quad1 = quad(
@@ -26,16 +35,8 @@ test('test_query_engine', async () => {
     quadSet.add(quad2);
     let container = new QuadContainer(quadSet, 0);
     const bindingsStream = await r2r.execute(container);
-    let resuults = new Array<string>();
-    // @ts-ignore
-    bindingsStream.on('data', (binding) => {
-        resuults.push(binding.toString());
-    });
-    bindingsStream.on('end', () => {
-        // The data-listener will not be called anymore once we get here.
-        expect(resuults.length).toBe(2);
-
-    });
+    const results = await collectBindings(bindingsStream);
+    expect(results).toHaveLength(2);
 });
 
 test('test_query_engine_with_extension_functions', async () => {
@@ -59,15 +60,7 @@ test('test_query_engine_with_extension_functions', async () => {
     quadSet.add(quad2);
     let container = new QuadContainer(quadSet, 0);
     const bindingsStream = await r2r.execute(container);
-    let results = new Array<string>();
-    // @ts-ignore
-    bindingsStream.on('data', (binding) => {
-        results.push(binding);
-    });
-
-    bindingsStream.on('end', () => {
-        // The data-listener will not be called anymore once we get here.
-        expect(results.length).toBe(2);
-    });
+    const results = await collectBindings(bindingsStream);
+    expect(results).toHaveLength(2);
 
 });
