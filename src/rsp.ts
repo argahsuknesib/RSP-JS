@@ -50,10 +50,12 @@ export class RSPEngine {
     public window_semantics: WindowSemantics;
     private r2r: R2ROperator;
     private logger: Logger;
+    private processing_queue: Promise<void>;
 
     constructor(query: string, options: RSPEngineOptions = {}) {
         this.windows = new Array<CSPARQLWindow>();
         this.streams = new Map<string, RDFStream>();
+        this.processing_queue = Promise.resolve();
         this.max_delay = Math.max(0, options.max_delay ?? 0);
         this.window_semantics = this.resolveWindowSemantics(options.window_semantics);
 
@@ -87,9 +89,18 @@ export class RSPEngine {
         const emitter = new EventEmitter();
         this.windows.forEach((window) => {
             window.subscribe("RStream", (data: QuadContainer) => {
-                void this.processWindow(window, data, emitter).catch((error: unknown) => {
-                    this.reportProcessingError(emitter, error);
-                });
+                this.processing_queue = this.processing_queue
+                    .then(() => this.processWindow(window, data, emitter))
+                    .catch((error: unknown) => {
+                        try {
+                            this.reportProcessingError(emitter, error);
+                        } catch (reportingError) {
+                            this.logger.error(
+                                `RSP query processing failed: ${String(reportingError)}`,
+                                "RSPEngine",
+                            );
+                        }
+                    });
             });
         });
         return emitter;
