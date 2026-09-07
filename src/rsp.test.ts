@@ -43,7 +43,6 @@ test('rsp_consumer_test', async () => {
     let results = new Array<string>();
     // @ts-ignore
     emitter.on('RStream', (object) => {
-        console.log("received results");
         results.push(object.bindings.toString());
     });
     if(stream){
@@ -56,7 +55,6 @@ test('rsp_consumer_test', async () => {
 
 
     expect(results.length).toBe(2+4+6+8);
-    console.log(results);
 });
 test('rsp_multiple_same_window_test', async () => {
     let query = `PREFIX : <https://rsp.js/>
@@ -78,7 +76,6 @@ test('rsp_multiple_same_window_test', async () => {
     let results = new Array<string>();
     // @ts-ignore
     emitter.on('RStream', (object) => {
-        console.log("received results");
         results.push(object.bindings.toString());
     });
     if(stream1 && stream2){
@@ -91,7 +88,6 @@ test('rsp_multiple_same_window_test', async () => {
 
 
     expect(results.length).toBe(2*(2+4+6+8));
-    console.log(results);
 });
 
 test('rsp_multiple_difff_window_test', async () => {
@@ -114,7 +110,6 @@ test('rsp_multiple_difff_window_test', async () => {
     let results = new Array<string>();
     // @ts-ignore
     emitter.on('RStream', (object) => {
-        console.log("received results");
         results.push(object.bindings.toString());
     });
     if(stream1 && stream2){
@@ -142,7 +137,6 @@ test('rsp_multiple_difff_window_test', async () => {
 
 
     expect(results.length).toBe(2+4+6+8);
-    console.log(results);
 });
 test('rsp_static_plus_window_test', async () => {
     let query = `PREFIX : <https://rsp.js/>
@@ -170,7 +164,6 @@ test('rsp_static_plus_window_test', async () => {
     let results = new Array<string>();
     // @ts-ignore
     emitter.on('RStream', (object) => {
-        console.log("received results");
         results.push(object.bindings.toString());
     });
     if(stream1){
@@ -183,7 +176,6 @@ test('rsp_static_plus_window_test', async () => {
 
 
     expect(results.length).toBe(2+4+6+8);
-    console.log(results);
 });
 
 test('test_get_all_streams', () => {

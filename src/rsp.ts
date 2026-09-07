@@ -1,20 +1,23 @@
-import { CSPARQLWindow, QuadContainer, ReportStrategy, Tick } from "./operators/s2r";
-import { R2ROperator } from "./operators/r2r";
 import { EventEmitter } from "events";
 import * as LOG_CONFIG from "./config/log_config.json";
 import { LogDestination, LogLevel, Logger } from "./util/Logger";
-const N3 = require('n3');
-const { DataFactory } = N3;
-const { namedNode, literal, defaultGraph, quad } = DataFactory;
-// @ts-ignore
-import { Quad } from 'n3';
+import { Quad } from "n3";
+import { CSPARQLWindow, QuadContainer, ReportStrategy, Tick, WindowSemantics } from "./operators/s2r";
+import { R2ROperator } from "./operators/r2r";
 import { RSPQLParser, WindowDefinition } from "./rspql";
+
+export type RSPEngineOptions = {
+    max_delay?: number,
+    window_semantics?: WindowSemantics | "trailing" | "centered",
+};
 
 export type binding_with_timestamp = {
     bindings: any,
     timestamp_from: number,
-    timestamp_to: number
-}
+    timestamp_to: number,
+    logical_trigger_time?: number,
+    window_semantics?: WindowSemantics,
+};
 
 export class RDFStream {
     name: string;
@@ -22,77 +25,100 @@ export class RDFStream {
 
     constructor(name: string, window: CSPARQLWindow) {
         this.name = name;
-        let EventEmitter = require('events').EventEmitter;
         this.emitter = new EventEmitter();
-        this.emitter.on('data', (quadcontainer: QuadContainer) => {
-            // @ts-ignore
-            quadcontainer.elements._graph = namedNode(window.name);
-            // @ts-ignore
+        this.emitter.on("data", (quadcontainer: QuadContainer) => {
+            // The graph identifies the source window for Comunica queries.
+            // @ts-ignore: Set is intentionally annotated with the graph used by the existing API.
+            quadcontainer.elements._graph = require("n3").DataFactory.namedNode(window.name);
             window.add(quadcontainer.elements, quadcontainer.last_time_changed());
         });
     }
 
     add(event: Set<Quad>, ts: number) {
-        this.emitter.emit('data', new QuadContainer(event, ts));
+        this.emitter.emit("data", new QuadContainer(event, ts));
     }
 }
 
 export class RSPEngine {
     windows: Array<CSPARQLWindow>;
     streams: Map<string, RDFStream>;
+    public max_delay: number;
+    public window_semantics: WindowSemantics;
     private r2r: R2ROperator;
     private logger: Logger;
 
-    constructor(query: string) {
+    constructor(query: string, options: RSPEngineOptions = {}) {
         this.windows = new Array<CSPARQLWindow>();
         this.streams = new Map<string, RDFStream>();
-        const logLevel: LogLevel = LogLevel[LOG_CONFIG.log_level as keyof typeof LogLevel];        
-        this.logger = new Logger(logLevel, LOG_CONFIG.classes_to_log, LOG_CONFIG.destination as unknown as LogDestination);
-        let parser = new RSPQLParser();
-        let parsed_query = parser.parse(query);
-        parsed_query.s2r.forEach((window: WindowDefinition) => {
-            let windowImpl = new CSPARQLWindow(window.window_name, window.width, window.slide, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0);
-            this.windows.push(windowImpl);
-            let stream = new RDFStream(window.stream_name, windowImpl);
-            this.streams.set(window.stream_name, stream);
-        })
-        this.r2r = new R2ROperator(parsed_query.sparql);
+        this.max_delay = Math.max(0, options.max_delay ?? 0);
+        this.window_semantics = this.resolveWindowSemantics(options.window_semantics);
 
+        const logLevel = LogLevel[LOG_CONFIG.log_level as keyof typeof LogLevel];
+        this.logger = new Logger(
+            logLevel,
+            LOG_CONFIG.classes_to_log,
+            LOG_CONFIG.destination as unknown as LogDestination,
+        );
+
+        const parser = new RSPQLParser();
+        const parsedQuery = parser.parse(query);
+        parsedQuery.s2r.forEach((window: WindowDefinition) => {
+            const windowImplementation = new CSPARQLWindow(
+                window.window_name,
+                window.width,
+                window.slide,
+                ReportStrategy.OnWindowClose,
+                Tick.TimeDriven,
+                0,
+                this.max_delay,
+                this.window_semantics,
+            );
+            this.windows.push(windowImplementation);
+            this.streams.set(window.stream_name, new RDFStream(window.stream_name, windowImplementation));
+        });
+        this.r2r = new R2ROperator(parsedQuery.sparql);
     }
 
     register() {
-        let EventEmitter = require('events').EventEmitter;
-        let emitter = new EventEmitter();
+        const emitter = new EventEmitter();
         this.windows.forEach((window) => {
             window.subscribe("RStream", async (data: QuadContainer) => {
-                this.logger.info(`Received window content ${data} for time ${data.last_time_changed()}`, `RSPEngine`);
-                // iterate over all the windows
-                for (let windowIt of this.windows) {
-                    // filter out the current triggering one
-                    if (windowIt != window) {
-                        let currentWindowData = windowIt.getContent(data.last_time_changed());
-                        if (currentWindowData) {
-                            // add the content of the other windows to the quad container
-                            currentWindowData.elements.forEach((q) => data.add(q, data.last_time_changed()));
-                        }
-                    }
+                if (data.len() === 0) {
+                    return;
                 }
-                this.logger.info(`Starting Window Query Processing for the window time ${data.last_time_stamp_changed}`, `RSPEngine`);
-                let bindingsStream = await this.r2r.execute(data);
-                bindingsStream.on('data', (binding: any) => {
-                    let object_with_timestamp: binding_with_timestamp = {
-                        bindings: binding,
-                        timestamp_from: window.t0,
-                        timestamp_to: window.t0 + window.slide
+
+                // A result window may depend on more than one named stream.
+                // Include the content of the other active windows at the same
+                // event time, using the same half-open boundary semantics.
+                for (const otherWindow of this.windows) {
+                    if (otherWindow === window) {
+                        continue;
                     }
-                    window.t0 += window.slide;
-                    emitter.emit("RStream", object_with_timestamp);
+                    const otherContent = otherWindow.getContent(data.last_time_changed());
+                    otherContent?.elements.forEach((quad) => data.add(quad, data.last_time_changed()));
+                }
+
+                this.logger.info(
+                    `Processing window ${window.getCSPARQLWindowDefinition()} with ${data.len()} quads`,
+                    "RSPEngine",
+                );
+                const bindingsStream = await this.r2r.execute(data);
+                const timestampFrom = data.window_start ?? data.last_time_changed();
+                const timestampTo = data.window_end ?? timestampFrom + window.width;
+                const logicalTriggerTime = data.logical_trigger_time ?? timestampTo;
+                const semantics = data.window_semantics ?? this.window_semantics;
+
+                bindingsStream.on("data", (binding: any) => {
+                    const result: binding_with_timestamp = {
+                        bindings: binding,
+                        timestamp_from: timestampFrom,
+                        timestamp_to: timestampTo,
+                        logical_trigger_time: logicalTriggerTime,
+                        window_semantics: semantics,
+                    };
+                    emitter.emit("RStream", result);
                 });
-                bindingsStream.on('end', () => {
-                    this.logger.info(`Ended Comunica Binding Stream for window time ${data.last_time_changed()}`, `RSPEngine`);
-                });
-                await bindingsStream;
-            })
+            });
         });
         return emitter;
     }
@@ -106,10 +132,15 @@ export class RSPEngine {
     }
 
     get_all_streams() {
-        let streams: string[] = [];
-        this.streams.forEach((stream) => {
-            streams.push(stream.name);
-        });
+        const streams: string[] = [];
+        this.streams.forEach((stream) => streams.push(stream.name));
         return streams;
+    }
+
+    private resolveWindowSemantics(value?: WindowSemantics | "trailing" | "centered") {
+        const normalized = value as string | undefined;
+        return normalized?.toLowerCase() === WindowSemantics.Centered
+            ? WindowSemantics.Centered
+            : WindowSemantics.Trailing;
     }
 }

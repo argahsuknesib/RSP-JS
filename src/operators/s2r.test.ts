@@ -1,4 +1,4 @@
-import {CSPARQLWindow, QuadContainer, ReportStrategy, Tick, WindowInstance} from './s2r';
+import {CSPARQLWindow, QuadContainer, ReportStrategy, Tick, WindowInstance, WindowSemantics, computeWindowIfAbsent} from './s2r';
 
 const N3 = require('n3');
 
@@ -92,8 +92,6 @@ test('test_stream_consumer', () => {
     let csparqlWindow = new CSPARQLWindow(":window1",10,2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0);
     // register window consumer
     csparqlWindow.subscribe('RStream',function (data: QuadContainer) {
-        console.log('Foo raised, Args:', data);
-        console.log('dat size', data.elements.size);
         recevied_data.push(data);
         data.elements.forEach(item => received_elementes.push(item));
     });
@@ -116,8 +114,91 @@ test('test_content_get', () => {
     let content = csparqlWindow.getContent(10);
     expect(content).toBeDefined();
     if(content) {
-        expect(content.elements.size).toBe(10);
+        // Window bounds are half-open, so timestamp 10 belongs to [2, 12).
+        expect(content.elements.size).toBe(8);
     }
     let undefinedContent = csparqlWindow.getContent(20);
     expect(undefinedContent).toBeUndefined();
+});
+
+test('scope aligns windows using floor rounding without duplicate instances', () => {
+    const window = new CSPARQLWindow(':window1', 10, 2, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0);
+
+    window.scope(4);
+    expect(window.active_windows.size).toBe(6);
+    expect(computeWindowIfAbsent(window.active_windows, new WindowInstance(-6, 4), () => new QuadContainer(new Set<Quad>(), 0))).toBe(true);
+});
+
+test('classifies and accepts a late event exactly at max_delay without regressing time', () => {
+    const window = new CSPARQLWindow(':window1', 100, 100, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 10);
+    const content = new QuadContainer(new Set<Quad>(), 0);
+    const target = new WindowInstance(0, 100);
+    window.active_windows.set(target, content);
+    window.set_current_time(100);
+
+    const event = quad(namedNode('https://rsp.js/late'), namedNode('http://rsp.js/p'), namedNode('http://rsp.js/o'), defaultGraph());
+    const observation = window.add(event, 90);
+
+    expect(observation).toMatchObject({
+        out_of_order: true,
+        lateness_ms: 10,
+        max_out_of_orderness_ms: 10,
+        within_bound: true,
+    });
+    expect(content.elements.has(event)).toBe(true);
+    expect(window.time).toBe(100);
+});
+
+test('rejects a late event beyond max_delay', () => {
+    const window = new CSPARQLWindow(':window1', 100, 100, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0, 10);
+    const content = new QuadContainer(new Set<Quad>(), 0);
+    window.active_windows.set(new WindowInstance(0, 100), content);
+    window.set_current_time(100);
+
+    const event = quad(namedNode('https://rsp.js/too-late'), namedNode('http://rsp.js/p'), namedNode('http://rsp.js/o'), defaultGraph());
+    const observation = window.add(event, 89);
+
+    expect(observation.within_bound).toBe(false);
+    expect(content.elements.has(event)).toBe(false);
+    expect(window.time).toBe(100);
+});
+
+test('uses half-open bounds for adjacent windows', () => {
+    const window = new CSPARQLWindow(':window1', 10, 10, ReportStrategy.OnWindowClose, Tick.TimeDriven, 0);
+    const first = new QuadContainer(new Set<Quad>(), 0);
+    const second = new QuadContainer(new Set<Quad>(), 10);
+    window.active_windows.set(new WindowInstance(0, 10), first);
+    window.active_windows.set(new WindowInstance(10, 20), second);
+
+    expect(window.getContent(9)).toBe(first);
+    expect(window.getContent(10)).toBe(second);
+    expect(window.getContent(20)).toBeUndefined();
+});
+
+test('records centered logical trigger time while retaining actual window bounds', () => {
+    const anchor = 1000;
+    const window = new CSPARQLWindow(
+        ':window1',
+        120,
+        60,
+        ReportStrategy.OnWindowClose,
+        Tick.TimeDriven,
+        anchor,
+        0,
+        WindowSemantics.Centered,
+    );
+    const content = new QuadContainer(new Set<Quad>([
+        quad(namedNode('https://rsp.js/centered'), namedNode('http://rsp.js/p'), namedNode('http://rsp.js/o'), defaultGraph()),
+    ]), anchor);
+    window.active_windows.set(new WindowInstance(anchor, anchor + 120), content);
+    const emitted: QuadContainer[] = [];
+    window.subscribe('RStream', (result) => emitted.push(result));
+
+    window.update_watermark(anchor + 120);
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].window_start).toBe(anchor);
+    expect(emitted[0].window_end).toBe(anchor + 120);
+    expect(emitted[0].logical_trigger_time).toBe(anchor + 60);
+    expect(emitted[0].window_semantics).toBe(WindowSemantics.Centered);
 });
