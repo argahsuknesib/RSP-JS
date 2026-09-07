@@ -28,14 +28,18 @@ export class RDFStream {
         this.emitter = new EventEmitter();
         this.emitter.on("data", (quadcontainer: QuadContainer) => {
             // The graph identifies the source window for Comunica queries.
-            // @ts-ignore: Set is intentionally annotated with the graph used by the existing API.
-            quadcontainer.elements._graph = require("n3").DataFactory.namedNode(window.name);
+            const graph = require("n3").DataFactory.namedNode(window.name);
+            quadcontainer.elements.forEach((quad) => {
+                // @ts-ignore: N3 stores the graph term in its private _graph field.
+                quad._graph = graph;
+            });
             window.add(quadcontainer.elements, quadcontainer.last_time_changed());
         });
     }
 
-    add(event: Set<Quad>, ts: number) {
-        this.emitter.emit("data", new QuadContainer(event, ts));
+    add(event: Quad | Set<Quad>, ts: number) {
+        const elements = event instanceof Set ? event : new Set<Quad>([event]);
+        this.emitter.emit("data", new QuadContainer(elements, ts));
     }
 }
 
@@ -82,33 +86,63 @@ export class RSPEngine {
     register() {
         const emitter = new EventEmitter();
         this.windows.forEach((window) => {
-            window.subscribe("RStream", async (data: QuadContainer) => {
-                if (data.len() === 0) {
+            window.subscribe("RStream", (data: QuadContainer) => {
+                void this.processWindow(window, data, emitter).catch((error: unknown) => {
+                    this.reportProcessingError(emitter, error);
+                });
+            });
+        });
+        return emitter;
+    }
+
+    private async processWindow(window: CSPARQLWindow, data: QuadContainer, emitter: EventEmitter): Promise<void> {
+        if (data.len() === 0) {
+            return;
+        }
+
+        // A result window may depend on more than one named stream. Prefer the
+        // exact logical window bounds over the last event that mutated content;
+        // the latter can be an out-of-order timestamp.
+        const windowStart = data.window_start;
+        const windowEnd = data.window_end;
+        const relatedTimestamp = data.last_time_changed();
+        for (const otherWindow of this.windows) {
+            if (otherWindow === window) {
+                continue;
+            }
+            const exactContent = windowStart !== undefined && windowEnd !== undefined
+                ? otherWindow.getContentForWindow(windowStart, windowEnd)
+                : undefined;
+            const otherContent = exactContent ?? otherWindow.getContent(relatedTimestamp);
+            otherContent?.elements.forEach((quad) => data.add(quad, relatedTimestamp));
+        }
+
+        this.logger.info(
+            `Processing window ${window.getCSPARQLWindowDefinition()} with ${data.len()} quads`,
+            "RSPEngine",
+        );
+        const bindingsStream = await this.r2r.execute(data);
+        const timestampFrom = windowStart ?? relatedTimestamp;
+        const timestampTo = windowEnd ?? timestampFrom + window.width;
+        const logicalTriggerTime = data.logical_trigger_time ?? timestampTo;
+        const semantics = data.window_semantics ?? this.window_semantics;
+
+        await new Promise<void>((resolve, reject) => {
+            let settled = false;
+            const finish = (error?: unknown) => {
+                if (settled) {
                     return;
                 }
-
-                // A result window may depend on more than one named stream.
-                // Include the content of the other active windows at the same
-                // event time, using the same half-open boundary semantics.
-                for (const otherWindow of this.windows) {
-                    if (otherWindow === window) {
-                        continue;
-                    }
-                    const otherContent = otherWindow.getContent(data.last_time_changed());
-                    otherContent?.elements.forEach((quad) => data.add(quad, data.last_time_changed()));
+                settled = true;
+                if (error === undefined) {
+                    resolve();
+                } else {
+                    reject(error);
                 }
+            };
 
-                this.logger.info(
-                    `Processing window ${window.getCSPARQLWindowDefinition()} with ${data.len()} quads`,
-                    "RSPEngine",
-                );
-                const bindingsStream = await this.r2r.execute(data);
-                const timestampFrom = data.window_start ?? data.last_time_changed();
-                const timestampTo = data.window_end ?? timestampFrom + window.width;
-                const logicalTriggerTime = data.logical_trigger_time ?? timestampTo;
-                const semantics = data.window_semantics ?? this.window_semantics;
-
-                bindingsStream.on("data", (binding: any) => {
+            bindingsStream.on("data", (binding: any) => {
+                try {
                     const result: binding_with_timestamp = {
                         bindings: binding,
                         timestamp_from: timestampFrom,
@@ -117,10 +151,22 @@ export class RSPEngine {
                         window_semantics: semantics,
                     };
                     emitter.emit("RStream", result);
-                });
+                } catch (error) {
+                    finish(error);
+                }
             });
+            bindingsStream.on("end", () => finish());
+            bindingsStream.on("error", (error: unknown) => finish(error));
         });
-        return emitter;
+    }
+
+    private reportProcessingError(emitter: EventEmitter, error: unknown): void {
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        if (emitter.listenerCount("error") > 0) {
+            emitter.emit("error", normalizedError);
+            return;
+        }
+        this.logger.error(`RSP query processing failed: ${normalizedError.message}`, "RSPEngine");
     }
 
     getStream(stream_name: string) {
