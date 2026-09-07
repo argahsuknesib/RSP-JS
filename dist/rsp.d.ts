@@ -17,7 +17,7 @@ export declare class RDFStream {
     name: string;
     emitter: EventEmitter;
     constructor(name: string, window: CSPARQLWindow);
-    add(event: Set<Quad>, ts: number): void;
+    add(event: Quad | Set<Quad>, ts: number): void;
 }
 export declare class RSPEngine {
     windows: Array<CSPARQLWindow>;
@@ -28,6 +28,8 @@ export declare class RSPEngine {
     private logger;
     constructor(query: string, options?: RSPEngineOptions);
     register(): EventEmitter<[never]>;
+    private processWindow;
+    private reportProcessingError;
     getStream(stream_name: string): RDFStream | undefined;
     addStaticData(static_data: Quad): void;
     get_all_streams(): string[];

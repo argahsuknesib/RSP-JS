@@ -50,7 +50,6 @@ class WindowInstance {
     constructor(open, close) {
         this.open = open;
         this.close = close;
-        this.has_triggered = false;
     }
     getDefinition() {
         return `[${this.open},${this.close})`;
@@ -61,22 +60,25 @@ class WindowInstance {
     is_same(other_window) {
         return this.open === other_window.open && this.close === other_window.close;
     }
-    set_triggered() {
-        this.has_triggered = true;
-    }
 }
 exports.WindowInstance = WindowInstance;
 class QuadContainer {
-    constructor(elements, ts) {
+    constructor(elements, ts, window_start, window_end) {
         this.elements = elements;
         this.last_time_stamp_changed = ts;
+        this.window_start = window_start;
+        this.window_end = window_end;
     }
     len() {
         return this.elements.size;
     }
     add(quad, quad_timestamp) {
+        if (this.elements.has(quad)) {
+            return false;
+        }
         this.elements.add(quad);
         this.last_time_stamp_changed = quad_timestamp;
+        return true;
     }
     last_time_changed() {
         return this.last_time_stamp_changed;
@@ -98,7 +100,6 @@ class CSPARQLWindow {
         this.active_windows = new Map();
         this.emitter = new events_1.EventEmitter();
         this.pending_triggers = new Set();
-        this.scope_origin_initialized = start_time !== 0;
         const logLevel = Logger_1.LogLevel[LOG_CONFIG.log_level];
         this.logger = new Logger_1.Logger(logLevel, LOG_CONFIG.classes_to_log, LOG_CONFIG.destination);
     }
@@ -113,6 +114,15 @@ class CSPARQLWindow {
             }
         }
         return selected === undefined ? undefined : this.active_windows.get(selected);
+    }
+    /** Return the active content for one exact logical window interval. */
+    getContentForWindow(window_start, window_end) {
+        for (const [window, content] of this.active_windows.entries()) {
+            if (window.open === window_start && window.close === window_end) {
+                return content;
+            }
+        }
+        return undefined;
     }
     /** Add one event or a set of events to all matching windows. */
     add(event, timestamp) {
@@ -142,7 +152,7 @@ class CSPARQLWindow {
         }
         const quads = event instanceof Set ? event : new Set([event]);
         for (const window of this.active_windows.keys()) {
-            if (window.has_triggered || timestamp < window.open || timestamp >= window.close) {
+            if (timestamp < window.open || timestamp >= window.close) {
                 continue;
             }
             const content = this.active_windows.get(window);
@@ -150,9 +160,10 @@ class CSPARQLWindow {
                 continue;
             }
             for (const quad of quads) {
-                content.add(quad, timestamp);
+                if (content.add(quad, timestamp)) {
+                    this.pending_triggers.add(window);
+                }
             }
-            this.pending_triggers.add(window);
         }
         // Late events never move the watermark backwards. In-order events
         // advance it by the configured allowed lateness.
@@ -169,24 +180,30 @@ class CSPARQLWindow {
             return window.close <= watermark;
         }
         if (this.report === ReportStrategy.OnContentChange) {
-            return true;
+            return this.pending_triggers.has(window) && _content.len() > 0;
         }
         return false;
     }
-    /** Emit and retire every window whose close is covered by the watermark. */
+    /** Emit changed content and retire windows whose close is covered by the watermark. */
     trigger_window_content(watermark) {
         const windowsToRetire = [];
         for (const [window, content] of this.active_windows.entries()) {
-            if (!this.compute_report(window, content, watermark) || window.has_triggered) {
+            const windowClosed = window.close <= watermark;
+            if (this.report === ReportStrategy.OnContentChange) {
+                if (this.tick === Tick.TimeDriven && this.compute_report(window, content, watermark)) {
+                    this.annotateAndEmit(window, content);
+                    this.pending_triggers.delete(window);
+                }
+                if (windowClosed) {
+                    windowsToRetire.push(window);
+                }
                 continue;
             }
-            if (content.len() > 0) {
-                content.window_start = window.open;
-                content.window_end = window.close;
-                content.logical_trigger_time = this.getLogicalTriggerTime(window);
-                content.window_semantics = this.window_semantics;
-                this.emitter.emit("RStream", content);
-                window.set_triggered();
+            if (!windowClosed) {
+                continue;
+            }
+            if (this.tick === Tick.TimeDriven && this.compute_report(window, content, watermark) && content.len() > 0) {
+                this.annotateAndEmit(window, content);
             }
             windowsToRetire.push(window);
         }
@@ -194,6 +211,13 @@ class CSPARQLWindow {
             this.active_windows.delete(window);
             this.pending_triggers.delete(window);
         }
+    }
+    annotateAndEmit(window, content) {
+        content.window_start = window.open;
+        content.window_end = window.close;
+        content.logical_trigger_time = this.getLogicalTriggerTime(window);
+        content.window_semantics = this.window_semantics;
+        this.emitter.emit("RStream", content);
     }
     update_watermark(new_time) {
         if (new_time <= this.current_watermark) {
@@ -206,14 +230,10 @@ class CSPARQLWindow {
         return this.current_watermark;
     }
     scope(timestamp) {
-        if (!this.scope_origin_initialized) {
-            this.t0 = timestamp;
-            this.scope_origin_initialized = true;
-        }
         const firstAlignedStart = Math.floor((timestamp - this.t0) / this.slide) * this.slide + this.t0;
         let windowStart = firstAlignedStart - this.width;
         while (windowStart <= timestamp) {
-            computeWindowIfAbsent(this.active_windows, new WindowInstance(windowStart, windowStart + this.width), () => new QuadContainer(new Set(), 0));
+            computeWindowIfAbsent(this.active_windows, new WindowInstance(windowStart, windowStart + this.width), (window) => new QuadContainer(new Set(), 0, window.open, window.close));
             windowStart += this.slide;
         }
     }

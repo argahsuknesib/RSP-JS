@@ -10,6 +10,9 @@ function generate_data(num_events, csparqlWindow) {
         csparqlWindow.add(stream_element, i);
     }
 }
+function makeQuad(id, predicate = 'http://rsp.js/test_property') {
+    return quad(namedNode(`https://rsp.js/${id}`), namedNode(predicate), namedNode('http://rsp.js/test_object'), defaultGraph());
+}
 test('create_graph_container', () => {
     const quad1 = quad(namedNode('https://ruben.verborgh.org/profile/#me'), namedNode('http://xmlns.com/foaf/0.1/givenName'), literal('Ruben', 'en'), defaultGraph());
     const quad2 = quad(namedNode('https://ruben.verborgh.org/profile/#me'), namedNode('http://xmlns.com/foaf/0.1/lastName'), literal('Verborgh', 'en'), defaultGraph());
@@ -74,6 +77,61 @@ test('test_content_get', () => {
     }
     let undefinedContent = csparqlWindow.getContent(20);
     expect(undefinedContent).toBeUndefined();
+});
+test('preserves upstream tick mode distinctions', () => {
+    const reportCounts = [s2r_1.Tick.TimeDriven, s2r_1.Tick.TupleDriven, s2r_1.Tick.BatchDriven].map((tick) => {
+        const window = new s2r_1.CSPARQLWindow(':window1', 10, 10, s2r_1.ReportStrategy.OnWindowClose, tick, 0);
+        const reports = [];
+        window.subscribe('RStream', (content) => reports.push(content));
+        window.add(makeQuad(`tick-${tick}-first`), 0);
+        window.add(makeQuad(`tick-${tick}-second`), 10);
+        return reports.length;
+    });
+    expect(reportCounts).toEqual([1, 0, 0]);
+});
+test('reports content changes without duplicate watermark reports', () => {
+    const window = new s2r_1.CSPARQLWindow(':window1', 10, 10, s2r_1.ReportStrategy.OnContentChange, s2r_1.Tick.TimeDriven, 0);
+    const reports = [];
+    window.subscribe('RStream', (content) => reports.push(content));
+    const firstQuad = makeQuad('content-first');
+    window.add(firstQuad, 0);
+    window.update_watermark(1);
+    expect(reports).toHaveLength(1);
+    window.add(firstQuad, 1);
+    window.update_watermark(2);
+    expect(reports).toHaveLength(1);
+    window.add(makeQuad('content-second'), 1);
+    window.update_watermark(3);
+    expect(reports).toHaveLength(2);
+    window.update_watermark(4);
+    expect(reports).toHaveLength(2);
+});
+test('accepted out-of-order content changes are reported once', () => {
+    const window = new s2r_1.CSPARQLWindow(':window1', 10, 10, s2r_1.ReportStrategy.OnContentChange, s2r_1.Tick.TimeDriven, 0, 5);
+    const reports = [];
+    window.subscribe('RStream', (content) => reports.push(content));
+    window.add(makeQuad('content-in-order'), 5);
+    window.update_watermark(1);
+    expect(reports).toHaveLength(1);
+    const lateQuad = makeQuad('content-late');
+    const observation = window.add(lateQuad, 4);
+    expect(observation.within_bound).toBe(true);
+    window.update_watermark(2);
+    expect(reports).toHaveLength(2);
+    expect(reports[1].elements.has(lateQuad)).toBe(true);
+    expect(reports[1].elements.size).toBeGreaterThan(0);
+});
+test.each([
+    [0, ['[-10,0)', '[-8,2)', '[-6,4)', '[-4,6)', '[-2,8)', '[0,10)']],
+    [1, ['[-10,0)', '[-8,2)', '[-6,4)', '[-4,6)', '[-2,8)', '[0,10)']],
+    [9, ['[-2,8)', '[0,10)', '[2,12)', '[4,14)', '[6,16)', '[8,18)']],
+    [10, ['[0,10)', '[2,12)', '[4,14)', '[6,16)', '[8,18)', '[10,20)']],
+    [11, ['[0,10)', '[2,12)', '[4,14)', '[6,16)', '[8,18)', '[10,20)']],
+])('keeps window origin at zero for first event %i', (timestamp, expectedDefinitions) => {
+    const window = new s2r_1.CSPARQLWindow(':window1', 10, 2, s2r_1.ReportStrategy.OnWindowClose, s2r_1.Tick.TimeDriven, 0);
+    window.scope(timestamp);
+    expect(window.t0).toBe(0);
+    expect(Array.from(window.active_windows.keys()).map((entry) => entry.getDefinition())).toEqual(expectedDefinitions);
 });
 test('scope aligns windows using floor rounding without duplicate instances', () => {
     const window = new s2r_1.CSPARQLWindow(':window1', 10, 2, s2r_1.ReportStrategy.OnWindowClose, s2r_1.Tick.TimeDriven, 0);

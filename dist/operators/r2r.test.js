@@ -14,6 +14,14 @@ const N3 = require('n3');
 const { DataFactory } = N3;
 const { namedNode, literal, defaultGraph, quad } = DataFactory;
 const r2r_1 = require("./r2r");
+function collectBindings(bindingsStream) {
+    return new Promise((resolve, reject) => {
+        const results = [];
+        bindingsStream.on('data', (binding) => results.push(binding));
+        bindingsStream.on('end', () => resolve(results));
+        bindingsStream.on('error', reject);
+    });
+}
 test('test_query_engine', () => __awaiter(void 0, void 0, void 0, function* () {
     let r2r = new r2r_1.R2ROperator(`SELECT * WHERE { ?s ?p ?o }`);
     const quad1 = quad(namedNode('https://rsp.js/test_subject_0'), namedNode('http://rsp.js/test_property'), namedNode('http://rsp.js/test_object'), defaultGraph());
@@ -23,15 +31,8 @@ test('test_query_engine', () => __awaiter(void 0, void 0, void 0, function* () {
     quadSet.add(quad2);
     let container = new s2r_1.QuadContainer(quadSet, 0);
     const bindingsStream = yield r2r.execute(container);
-    let resuults = new Array();
-    // @ts-ignore
-    bindingsStream.on('data', (binding) => {
-        resuults.push(binding.toString());
-    });
-    bindingsStream.on('end', () => {
-        // The data-listener will not be called anymore once we get here.
-        expect(resuults.length).toBe(2);
-    });
+    const results = yield collectBindings(bindingsStream);
+    expect(results).toHaveLength(2);
 }));
 test('test_query_engine_with_extension_functions', () => __awaiter(void 0, void 0, void 0, function* () {
     let r2r = new r2r_1.R2ROperator(`
@@ -44,13 +45,6 @@ test('test_query_engine_with_extension_functions', () => __awaiter(void 0, void 
     quadSet.add(quad2);
     let container = new s2r_1.QuadContainer(quadSet, 0);
     const bindingsStream = yield r2r.execute(container);
-    let results = new Array();
-    // @ts-ignore
-    bindingsStream.on('data', (binding) => {
-        results.push(binding);
-    });
-    bindingsStream.on('end', () => {
-        // The data-listener will not be called anymore once we get here.
-        expect(results.length).toBe(2);
-    });
+    const results = yield collectBindings(bindingsStream);
+    expect(results).toHaveLength(2);
 }));

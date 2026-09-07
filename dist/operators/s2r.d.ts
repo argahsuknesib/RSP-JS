@@ -29,12 +29,10 @@ export type OutOfOrderObservation = {
 export declare class WindowInstance {
     open: number;
     close: number;
-    has_triggered: boolean;
     constructor(open: number, close: number);
     getDefinition(): string;
     hasCode(): number;
     is_same(other_window: WindowInstance): boolean;
-    set_triggered(): void;
 }
 export declare class QuadContainer {
     elements: Set<Quad>;
@@ -43,9 +41,9 @@ export declare class QuadContainer {
     window_end?: number;
     logical_trigger_time?: number;
     window_semantics?: WindowSemantics;
-    constructor(elements: Set<Quad>, ts: number);
+    constructor(elements: Set<Quad>, ts: number, window_start?: number, window_end?: number);
     len(): number;
-    add(quad: Quad, quad_timestamp: number): void;
+    add(quad: Quad, quad_timestamp: number): boolean;
     last_time_changed(): number;
 }
 export declare class CSPARQLWindow {
@@ -63,17 +61,19 @@ export declare class CSPARQLWindow {
     private current_watermark;
     max_delay: number;
     window_semantics: WindowSemantics;
-    pending_triggers: Set<WindowInstance>;
-    private scope_origin_initialized;
+    private pending_triggers;
     constructor(name: string, width: number, slide: number, report: ReportStrategy, tick: Tick, start_time: number, max_delay?: number, window_semantics?: WindowSemantics);
     /** Return the active window with the earliest close that contains a timestamp. */
     getContent(timestamp: number): QuadContainer | undefined;
+    /** Return the active content for one exact logical window interval. */
+    getContentForWindow(window_start: number, window_end: number): QuadContainer | undefined;
     /** Add one event or a set of events to all matching windows. */
     add(event: Quad | Set<Quad>, timestamp: number): OutOfOrderObservation;
     if_event_late(timestamp: number): boolean;
     compute_report(window: WindowInstance, _content: QuadContainer, watermark: number): boolean;
-    /** Emit and retire every window whose close is covered by the watermark. */
+    /** Emit changed content and retire windows whose close is covered by the watermark. */
     trigger_window_content(watermark: number): void;
+    private annotateAndEmit;
     update_watermark(new_time: number): void;
     get_current_watermark(): number;
     scope(timestamp: number): void;
