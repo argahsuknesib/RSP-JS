@@ -64,6 +64,7 @@ class RSPEngine {
         var _a;
         this.windows = new Array();
         this.streams = new Map();
+        this.processing_queue = Promise.resolve();
         this.max_delay = Math.max(0, (_a = options.max_delay) !== null && _a !== void 0 ? _a : 0);
         this.window_semantics = this.resolveWindowSemantics(options.window_semantics);
         const logLevel = Logger_1.LogLevel[LOG_CONFIG.log_level];
@@ -81,8 +82,15 @@ class RSPEngine {
         const emitter = new events_1.EventEmitter();
         this.windows.forEach((window) => {
             window.subscribe("RStream", (data) => {
-                void this.processWindow(window, data, emitter).catch((error) => {
-                    this.reportProcessingError(emitter, error);
+                this.processing_queue = this.processing_queue
+                    .then(() => this.processWindow(window, data, emitter))
+                    .catch((error) => {
+                    try {
+                        this.reportProcessingError(emitter, error);
+                    }
+                    catch (reportingError) {
+                        this.logger.error(`RSP query processing failed: ${String(reportingError)}`, "RSPEngine");
+                    }
                 });
             });
         });

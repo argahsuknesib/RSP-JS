@@ -26,6 +26,7 @@ export declare class RSPEngine {
     window_semantics: WindowSemantics;
     private r2r;
     private logger;
+    private processing_queue;
     constructor(query: string, options?: RSPEngineOptions);
     register(): EventEmitter<[never]>;
     private processWindow;
