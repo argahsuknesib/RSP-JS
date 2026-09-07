@@ -72,6 +72,43 @@ async function RSP() {
 RSP();
 ```
 
+### Window timing and out-of-order events
+
+The default `RSPEngine` behavior uses `max_delay = 0`, trailing window
+timestamps, and half-open window bounds `[open, close)`. In-order streams keep
+the upstream timing behavior while results report the actual window bounds in
+`timestamp_from` and `timestamp_to`.
+
+To accept bounded out-of-order events, provide a non-negative `max_delay` in
+the same timestamp units as stream events:
+
+```ts
+const rspEngine = new RSPEngine(query, { max_delay: 5000 });
+```
+
+An event that arrives earlier than the current event-time reference is
+accepted when its lateness is at most `max_delay`; later events are discarded.
+Accepted late events do not move event time or the watermark backwards. The
+watermark advances with in-order input to `event_timestamp - max_delay`, and a
+window is eligible for its closing report when its close is covered by that
+watermark.
+
+Window starts are aligned to the configured `start_time` origin using floor
+rounding. With the default origin of zero, an event at an exact boundary belongs
+to the following window, so adjacent windows do not overlap at their close
+boundary.
+
+Results also include `logical_trigger_time` and `window_semantics`. The default
+`trailing` semantics use the window close as the logical timestamp. Centered
+semantics can be selected explicitly:
+
+```ts
+const rspEngine = new RSPEngine(query, { window_semantics: "centered" });
+```
+
+Centered results retain their actual `timestamp_from` and `timestamp_to` bounds
+while reporting the midpoint as `logical_trigger_time`.
+
 ```ts
 const N3 = require("n3");
 const { DataFactory } = N3;
