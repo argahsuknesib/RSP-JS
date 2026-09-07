@@ -26,10 +26,14 @@ export declare class RSPEngine {
     window_semantics: WindowSemantics;
     private r2r;
     private logger;
-    private processing_queue;
+    private next_processing_sequence;
+    private next_emission_sequence;
+    private completed_processing;
     constructor(query: string, options?: RSPEngineOptions);
     register(): EventEmitter<[never]>;
     private processWindow;
+    private completeProcessing;
+    private reportProcessingErrorSafely;
     private reportProcessingError;
     getStream(stream_name: string): RDFStream | undefined;
     addStaticData(static_data: Quad): void;

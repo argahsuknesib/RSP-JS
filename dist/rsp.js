@@ -64,7 +64,9 @@ class RSPEngine {
         var _a;
         this.windows = new Array();
         this.streams = new Map();
-        this.processing_queue = Promise.resolve();
+        this.next_processing_sequence = 0;
+        this.next_emission_sequence = 0;
+        this.completed_processing = new Map();
         this.max_delay = Math.max(0, (_a = options.max_delay) !== null && _a !== void 0 ? _a : 0);
         this.window_semantics = this.resolveWindowSemantics(options.window_semantics);
         const logLevel = Logger_1.LogLevel[LOG_CONFIG.log_level];
@@ -82,25 +84,19 @@ class RSPEngine {
         const emitter = new events_1.EventEmitter();
         this.windows.forEach((window) => {
             window.subscribe("RStream", (data) => {
-                this.processing_queue = this.processing_queue
-                    .then(() => this.processWindow(window, data, emitter))
-                    .catch((error) => {
-                    try {
-                        this.reportProcessingError(emitter, error);
-                    }
-                    catch (reportingError) {
-                        this.logger.error(`RSP query processing failed: ${String(reportingError)}`, "RSPEngine");
-                    }
-                });
+                const sequence = this.next_processing_sequence++;
+                void this.processWindow(window, data)
+                    .then((results) => this.completeProcessing(emitter, sequence, results))
+                    .catch((error) => this.completeProcessing(emitter, sequence, [], error));
             });
         });
         return emitter;
     }
-    processWindow(window, data, emitter) {
+    processWindow(window, data) {
         var _a, _b;
         return __awaiter(this, void 0, void 0, function* () {
             if (data.len() === 0) {
-                return;
+                return [];
             }
             // A result window may depend on more than one named stream. Prefer the
             // exact logical window bounds over the last event that mutated content;
@@ -124,6 +120,7 @@ class RSPEngine {
             const timestampTo = windowEnd !== null && windowEnd !== void 0 ? windowEnd : timestampFrom + window.width;
             const logicalTriggerTime = (_a = data.logical_trigger_time) !== null && _a !== void 0 ? _a : timestampTo;
             const semantics = (_b = data.window_semantics) !== null && _b !== void 0 ? _b : this.window_semantics;
+            const results = [];
             yield new Promise((resolve, reject) => {
                 let settled = false;
                 const finish = (error) => {
@@ -139,24 +136,50 @@ class RSPEngine {
                     }
                 };
                 bindingsStream.on("data", (binding) => {
-                    try {
-                        const result = {
-                            bindings: binding,
-                            timestamp_from: timestampFrom,
-                            timestamp_to: timestampTo,
-                            logical_trigger_time: logicalTriggerTime,
-                            window_semantics: semantics,
-                        };
-                        emitter.emit("RStream", result);
-                    }
-                    catch (error) {
-                        finish(error);
-                    }
+                    results.push({
+                        bindings: binding,
+                        timestamp_from: timestampFrom,
+                        timestamp_to: timestampTo,
+                        logical_trigger_time: logicalTriggerTime,
+                        window_semantics: semantics,
+                    });
                 });
                 bindingsStream.on("end", () => finish());
                 bindingsStream.on("error", (error) => finish(error));
             });
+            return results;
         });
+    }
+    completeProcessing(emitter, sequence, results, error) {
+        this.completed_processing.set(sequence, { results, error });
+        while (this.completed_processing.has(this.next_emission_sequence)) {
+            const completed = this.completed_processing.get(this.next_emission_sequence);
+            this.completed_processing.delete(this.next_emission_sequence);
+            this.next_emission_sequence++;
+            if (completed === undefined) {
+                continue;
+            }
+            if (completed.error !== undefined) {
+                this.reportProcessingErrorSafely(emitter, completed.error);
+                continue;
+            }
+            for (const result of completed.results) {
+                try {
+                    emitter.emit("RStream", result);
+                }
+                catch (emissionError) {
+                    this.reportProcessingErrorSafely(emitter, emissionError);
+                }
+            }
+        }
+    }
+    reportProcessingErrorSafely(emitter, error) {
+        try {
+            this.reportProcessingError(emitter, error);
+        }
+        catch (reportingError) {
+            this.logger.error(`RSP query processing failed: ${String(reportingError)}`, "RSPEngine");
+        }
     }
     reportProcessingError(emitter, error) {
         const normalizedError = error instanceof Error ? error : new Error(String(error));
